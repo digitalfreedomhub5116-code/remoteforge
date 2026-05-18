@@ -137,12 +137,100 @@ function startHeartbeat() {
 }
 
 /**
+ * Execute a single step (used by both execute and plan modes)
+ */
+async function executeStep(step) {
+  switch (step.type) {
+    case 'screenshot': {
+      const ss = await takeScreenshot();
+      return { success: ss.success, stdout: ss.success ? 'Screenshot captured' : '', stderr: ss.error || '', screenshot_base64: ss.screenshot_base64 };
+    }
+    case 'system': {
+      const info = await getSystemInfo();
+      return { success: info.success, stdout: info.success ? JSON.stringify(info.info, null, 2) : '', stderr: info.error || '' };
+    }
+    case 'app':
+      return await executeAppCommand(step.command);
+    case 'keyboard':
+      return await executeKeyboardCommand(step.command);
+    default: {
+      const analysis = analyzeCommand(step.command);
+      if (!analysis.allowed) return { success: false, stdout: '', stderr: analysis.reason };
+      return await executeShellCommand(step.command, COMMAND_TIMEOUT);
+    }
+  }
+}
+
+/**
  * Process an incoming command — routes through AI brain first
  */
 async function processCommand(command) {
-  const { id, raw_input } = command;
-  console.log(`\n⚡ Command received: "${raw_input}"`);
+  const { id, raw_input, command_type } = command;
+  console.log(`\n⚡ Command received: "${raw_input}" [mode: ${command_type}]`);
 
+  // ---- PLAN MODE: Just return the plan, don't execute ----
+  if (command_type === 'plan') {
+    await supabase.from('commands').update({ status: 'planning', started_at: new Date().toISOString() }).eq('id', id);
+
+    try {
+      console.log('📋 Planning...');
+      const plan = await interpretCommand(raw_input);
+      console.log(`📋 Plan ready: ${plan.summary} (${plan.steps.length} steps)`);
+
+      // Return the plan as JSON so the UI can render it
+      await supabase.from('commands').update({
+        status: 'plan_ready',
+        parsed_command: plan.summary,
+        result_stdout: JSON.stringify(plan, null, 2),
+        completed_at: new Date().toISOString(),
+      }).eq('id', id);
+      return;
+    } catch (err) {
+      await supabase.from('commands').update({ status: 'failed', result_stderr: err.message, completed_at: new Date().toISOString() }).eq('id', id);
+      return;
+    }
+  }
+
+  // ---- EXECUTE_PLAN MODE: Execute a previously planned set of steps ----
+  if (command_type === 'execute_plan') {
+    console.log('▶ Implementing plan...');
+    await supabase.from('commands').update({ status: 'executing', started_at: new Date().toISOString() }).eq('id', id);
+
+    try {
+      // The plan JSON is stored in result_stdout from the planning phase
+      const { data: cmdData } = await supabase.from('commands').select('result_stdout').eq('id', id).single();
+      const plan = JSON.parse(cmdData.result_stdout);
+      
+      const allResults = [];
+      let allSuccess = true;
+      let screenshotBase64 = null;
+
+      for (let i = 0; i < plan.steps.length; i++) {
+        const step = plan.steps[i];
+        console.log(`   Step ${i + 1}/${plan.steps.length}: ${step.description}`);
+        const stepResult = await executeStep(step);
+        if (step.type === 'screenshot' && stepResult.screenshot_base64) screenshotBase64 = stepResult.screenshot_base64;
+        if (!stepResult.success) allSuccess = false;
+        allResults.push(`[${step.description}]\n${stepResult.stdout || stepResult.stderr || '(done)'}`);
+        if (!stepResult.success) { allResults.push('\n❌ Step failed — stopping.'); break; }
+      }
+
+      const updateData = {
+        status: allSuccess ? 'completed' : 'failed',
+        result_stdout: allResults.join('\n\n').slice(0, 50000),
+        completed_at: new Date().toISOString(),
+      };
+      if (screenshotBase64) updateData.result_screenshot = screenshotBase64;
+      await supabase.from('commands').update(updateData).eq('id', id);
+      console.log(`${allSuccess ? '✅' : '❌'} Plan implementation ${allSuccess ? 'complete' : 'failed'}`);
+      return;
+    } catch (err) {
+      await supabase.from('commands').update({ status: 'failed', result_stderr: err.message, completed_at: new Date().toISOString() }).eq('id', id);
+      return;
+    }
+  }
+
+  // ---- EXECUTE MODE (default): Interpret + execute immediately ----
   // Mark as processing (AI is thinking)
   await supabase
     .from('commands')
@@ -293,6 +381,11 @@ function subscribeToCommands() {
         if (command.status === 'pending' && command.confirmed_at && command.requires_confirmation) {
           console.log(`✅ Confirmation received for command: ${command.raw_input}`);
           processCommand({ ...command, requires_confirmation: false });
+        }
+        // Handle "Implement Plan" button click
+        if (command.status === 'pending' && command.command_type === 'execute_plan') {
+          console.log(`▶ Plan implementation requested: ${command.raw_input}`);
+          processCommand(command);
         }
       }
     )

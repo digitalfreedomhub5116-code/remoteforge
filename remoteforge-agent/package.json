@@ -13,6 +13,7 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "@supabase/supabase-js": "^2.106.0",
     "dotenv": "^17.4.2",
     "open": "^11.0.0",

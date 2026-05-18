@@ -248,6 +248,101 @@ async function executeFileCommand(operation, params) {
   }
 }
 
+/**
+ * Execute a keyboard command (type text, press keys, hotkeys)
+ */
+async function executeKeyboardCommand(commandJson) {
+  try {
+    const cmd = typeof commandJson === 'string' ? JSON.parse(commandJson) : commandJson;
+
+    switch (cmd.action) {
+      case 'type': {
+        // Use PowerShell SendKeys to type text
+        // First wait a moment for the window to be focused
+        await new Promise(r => setTimeout(r, 500));
+        
+        // Escape special SendKeys characters
+        const escaped = cmd.text
+          .replace(/[+^%~(){}[\]]/g, '{$&}');
+        
+        const psCmd = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${escaped.replace(/'/g, "''")}')`;
+        const result = await executeShellCommand(psCmd, 10000);
+        return {
+          success: true,
+          stdout: `Typed: "${cmd.text}"`,
+          stderr: result.stderr || '',
+        };
+      }
+
+      case 'hotkey': {
+        // Build SendKeys hotkey string
+        const keyMap = {
+          'control': '^', 'ctrl': '^',
+          'alt': '%',
+          'shift': '+',
+          'enter': '{ENTER}', 'return': '{ENTER}',
+          'tab': '{TAB}',
+          'escape': '{ESC}', 'esc': '{ESC}',
+          'backspace': '{BS}',
+          'delete': '{DEL}',
+          'up': '{UP}', 'down': '{DOWN}', 'left': '{LEFT}', 'right': '{RIGHT}',
+          'home': '{HOME}', 'end': '{END}',
+          'pageup': '{PGUP}', 'pagedown': '{PGDN}',
+          'f1': '{F1}', 'f2': '{F2}', 'f3': '{F3}', 'f4': '{F4}',
+          'f5': '{F5}', 'f6': '{F6}', 'f7': '{F7}', 'f8': '{F8}',
+          'f9': '{F9}', 'f10': '{F10}', 'f11': '{F11}', 'f12': '{F12}',
+          'space': ' ',
+        };
+
+        let sendKeysStr = '';
+        const modifiers = [];
+        let mainKey = '';
+
+        for (const key of cmd.keys) {
+          const lower = key.toLowerCase();
+          if (['control', 'ctrl', 'alt', 'shift'].includes(lower)) {
+            modifiers.push(keyMap[lower]);
+          } else {
+            mainKey = keyMap[lower] || lower;
+          }
+        }
+
+        sendKeysStr = modifiers.join('') + mainKey;
+
+        await new Promise(r => setTimeout(r, 300));
+        const psCmd = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${sendKeysStr}')`;
+        const result = await executeShellCommand(psCmd, 10000);
+        return {
+          success: true,
+          stdout: `Pressed: ${cmd.keys.join('+')}`,
+          stderr: result.stderr || '',
+        };
+      }
+
+      case 'key': {
+        const keyMap = {
+          'enter': '{ENTER}', 'tab': '{TAB}', 'escape': '{ESC}',
+          'backspace': '{BS}', 'delete': '{DEL}', 'space': ' ',
+        };
+        const sendKey = keyMap[cmd.key.toLowerCase()] || cmd.key;
+        await new Promise(r => setTimeout(r, 300));
+        const psCmd = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${sendKey}')`;
+        const result = await executeShellCommand(psCmd, 10000);
+        return {
+          success: true,
+          stdout: `Pressed: ${cmd.key}`,
+          stderr: result.stderr || '',
+        };
+      }
+
+      default:
+        return { success: false, stdout: '', stderr: `Unknown keyboard action: ${cmd.action}` };
+    }
+  } catch (err) {
+    return { success: false, stdout: '', stderr: `Keyboard command failed: ${err.message}` };
+  }
+}
+
 module.exports = {
   analyzeCommand,
   executeShellCommand,
@@ -255,4 +350,5 @@ module.exports = {
   takeScreenshot,
   getSystemInfo,
   executeFileCommand,
+  executeKeyboardCommand,
 };

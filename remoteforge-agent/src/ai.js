@@ -3,6 +3,7 @@
  * 
  * Uses Google Gemini to translate natural language
  * into structured, executable PC commands.
+ * Now supports keyboard/mouse control!
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -17,27 +18,43 @@ Response schema:
 {
   "steps": [
     {
-      "type": "shell" | "app" | "screenshot" | "system" | "file",
-      "command": "the exact PowerShell command to run",
-      "description": "short human-readable description of what this does",
+      "type": "shell" | "app" | "screenshot" | "system" | "keyboard",
+      "command": "the command string (see type-specific format below)",
+      "description": "short human-readable description",
       "is_destructive": true | false
     }
   ],
   "summary": "one-line summary of what you're doing for the user"
 }
 
-Rules:
+Available command types:
+- "shell": Run a PowerShell command. command = the exact PowerShell command.
+- "app": Open an application. command = the app name (e.g., "chrome", "notepad").
+- "screenshot": Capture the screen. command = "screenshot".
+- "system": Get CPU/RAM/disk info. command = "sysinfo".
+- "keyboard": Control keyboard input. command = JSON string with one of these actions:
+    Type text: {"action":"type","text":"hello world"}
+    Press hotkey: {"action":"hotkey","keys":["control","s"]}
+    Press single key: {"action":"key","key":"enter"}
+
+KEYBOARD RULES:
+- To type text into a specific app, FIRST use a "shell" step to focus that window using PowerShell:
+  (New-Object -ComObject WScript.Shell).AppActivate('Window Title')
+- THEN use a "keyboard" step to type the text.
+- For hotkeys, valid key names: control, alt, shift, enter, tab, escape, backspace, delete, up, down, left, right, f1-f12, a-z, 0-9
+- Always focus the target window before typing!
+
+GENERAL RULES:
 1. All shell commands MUST be valid Windows PowerShell syntax.
-2. Use full paths when possible (e.g., C:\\Users\\<username>\\Desktop).
-3. For "open app" requests, use Start-Process with the correct executable name.
-4. For screenshot requests, set type to "screenshot" and command to "screenshot" (the agent handles this natively).
-5. For system info requests, set type to "system" and command to "sysinfo".
-6. Mark is_destructive=true for any command that deletes, formats, removes, or permanently modifies data.
-7. For multi-step tasks (e.g., "organize my desktop"), break them into individual commands.
-8. NEVER generate commands that format drives, delete system files, or modify the Windows registry unless explicitly asked.
-9. If the user asks something that isn't a PC command (e.g., "what's the weather"), respond with a single step: type="shell", command="echo <your answer>", and answer their question in the echo.
-10. The current Windows username is available from the environment. Use $env:USERPROFILE for paths.
-11. If you are unsure what the user wants, ask for clarification via echo.
+2. Use $env:USERPROFILE for user paths.
+3. For "open app" requests, use type "app" with the app name.
+4. For screenshot requests, set type to "screenshot".
+5. For system info requests, set type to "system".
+6. Mark is_destructive=true for anything that deletes, formats, or permanently modifies data.
+7. For multi-step tasks, break them into individual steps.
+8. NEVER generate commands that format drives, delete system files, or modify the registry unless explicitly asked.
+9. If the user asks a non-PC question (e.g., "what's the weather"), answer via: type="shell", command="echo Your answer here".
+10. If unsure, ask for clarification via echo.
 
 Examples:
 
@@ -47,11 +64,14 @@ User: "open chrome"
 User: "what's my ip address"
 {"steps":[{"type":"shell","command":"(Invoke-WebRequest -Uri 'https://api.ipify.org').Content","description":"Getting public IP address","is_destructive":false}],"summary":"Fetching your public IP address"}
 
-User: "clean up temp files"
-{"steps":[{"type":"shell","command":"Remove-Item -Path $env:TEMP\\* -Recurse -Force -ErrorAction SilentlyContinue","description":"Deleting temporary files","is_destructive":true}],"summary":"Cleaning temporary files"}
+User: "type hello in notepad"
+{"steps":[{"type":"shell","command":"(New-Object -ComObject WScript.Shell).AppActivate('Notepad')","description":"Focusing Notepad window","is_destructive":false},{"type":"keyboard","command":"{\\"action\\":\\"type\\",\\"text\\":\\"hello\\"}","description":"Typing hello into Notepad","is_destructive":false}],"summary":"Typing 'hello' in Notepad"}
 
-User: "organize my desktop by file type"
-{"steps":[{"type":"shell","command":"$desktop = [Environment]::GetFolderPath('Desktop'); $folders = @{'Images'='*.png','*.jpg','*.jpeg','*.gif','*.bmp','*.webp'; 'Documents'='*.pdf','*.docx','*.doc','*.txt','*.xlsx'; 'Videos'='*.mp4','*.mkv','*.avi','*.mov'; 'Archives'='*.zip','*.rar','*.7z'}; foreach($folder in $folders.Keys){ $path = Join-Path $desktop $folder; if(!(Test-Path $path)){New-Item -ItemType Directory -Path $path | Out-Null}; foreach($ext in $folders[$folder]){ Get-ChildItem -Path $desktop -Filter $ext -File -ErrorAction SilentlyContinue | Move-Item -Destination $path -Force } }; Write-Output 'Desktop organized!'","description":"Organizing desktop files into folders by type","is_destructive":false}],"summary":"Organizing your desktop files into categorized folders"}`;
+User: "press ctrl+s"
+{"steps":[{"type":"keyboard","command":"{\\"action\\":\\"hotkey\\",\\"keys\\":[\\"control\\",\\"s\\"]}","description":"Pressing Ctrl+S to save","is_destructive":false}],"summary":"Pressing Ctrl+S"}
+
+User: "clean up temp files"  
+{"steps":[{"type":"shell","command":"Remove-Item -Path $env:TEMP\\\\* -Recurse -Force -ErrorAction SilentlyContinue","description":"Deleting temporary files","is_destructive":true}],"summary":"Cleaning temporary files"}`;
 
 let ai = null;
 let model = null;
@@ -69,7 +89,7 @@ function initAI(apiKey) {
   model = ai.getGenerativeModel({ 
     model: 'gemini-2.0-flash',
     generationConfig: {
-      temperature: 0.1,  // Low temperature for predictable commands
+      temperature: 0.1,
       maxOutputTokens: 2048,
     },
   });
@@ -80,11 +100,9 @@ function initAI(apiKey) {
 
 /**
  * Interpret a natural language command using Gemini
- * Returns structured command data
  */
 async function interpretCommand(userInput) {
   if (!model) {
-    // Fallback to basic detection if AI isn't available
     return fallbackInterpret(userInput);
   }
 
@@ -99,9 +117,8 @@ async function interpretCommand(userInput) {
     const result = await chat.sendMessage(userInput);
     const text = result.response.text().trim();
 
-    // Clean any markdown fences the model might add despite instructions
+    // Clean any markdown fences
     const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
     const parsed = JSON.parse(cleaned);
 
     if (!parsed.steps || !Array.isArray(parsed.steps)) {
@@ -125,12 +142,10 @@ function fallbackInterpret(input) {
   if (lower.includes('screenshot') || lower === 'ss') {
     return { steps: [{ type: 'screenshot', command: 'screenshot', description: 'Taking screenshot', is_destructive: false }], summary: 'Taking a screenshot' };
   }
-
-  if (lower.includes('sysinfo') || lower.includes('system info') || lower.includes('system status')) {
+  if (lower.includes('sysinfo') || lower.includes('system info')) {
     return { steps: [{ type: 'system', command: 'sysinfo', description: 'Getting system info', is_destructive: false }], summary: 'Getting system information' };
   }
-
-  if (lower.startsWith('open ') || lower.startsWith('launch ') || lower.startsWith('start ')) {
+  if (/^(open|launch|start)\s+/i.test(lower)) {
     const app = input.replace(/^(open|launch|start)\s+/i, '').trim();
     return { steps: [{ type: 'app', command: app, description: `Opening ${app}`, is_destructive: false }], summary: `Opening ${app}` };
   }

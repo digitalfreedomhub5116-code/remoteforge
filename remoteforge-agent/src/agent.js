@@ -18,6 +18,7 @@ const {
   takeScreenshot,
   getSystemInfo,
   executeFileCommand,
+  executeKeyboardCommand,
 } = require('./executor');
 const { initAI, interpretCommand } = require('./ai');
 
@@ -202,6 +203,10 @@ async function processCommand(command) {
         }
         case 'app': {
           stepResult = await executeAppCommand(step.command);
+          break;
+        }
+        case 'keyboard': {
+          stepResult = await executeKeyboardCommand(step.command);
           break;
         }
         default: {

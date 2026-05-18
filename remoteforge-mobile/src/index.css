@@ -1,60 +1,78 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #1a1a1a;
-  --color-bg-deep: #131314;
+  --color-bg: #131314;
   --color-surface: #1e1f20;
   --color-surface-2: #282a2c;
-  --color-surface-3: #303134;
-  --color-surface-hover: #3c4043;
-  --color-border: #3c4043;
-  --color-border-light: #5f6368;
+  --color-surface-hover: #353739;
+  --color-border: #303134;
   --color-text: #e3e3e3;
-  --color-text-secondary: #bdc1c6;
-  --color-text-muted: #9aa0a6;
+  --color-text-2: #c4c7c5;
+  --color-text-muted: #8e918f;
   --color-text-dim: #5f6368;
-  --color-blue: #8ab4f8;
-  --color-blue-glow: rgba(138, 180, 248, 0.08);
-  --color-cyan: #78d9ec;
+  --color-accent: #8ab4f8;
+  --color-accent-soft: rgba(138, 180, 248, 0.08);
   --color-green: #81c995;
-  --color-green-glow: rgba(129, 201, 149, 0.08);
   --color-red: #f28b82;
-  --color-red-glow: rgba(242, 139, 130, 0.08);
-  --color-orange: #fdd663;
-  --color-purple: #d7aefb;
-  --font-sans: 'Inter', 'Google Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --color-user-bg: #2b3245;
+  --font-sans: "Google Sans Text", "Google Sans", system-ui, -apple-system, sans-serif;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body, #root { height: 100%; width: 100%; overflow: hidden; background: var(--color-bg-deep); }
-body { color: var(--color-text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
 
-.safe-top { padding-top: env(safe-area-inset-top, 0px); }
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #3c4043; border-radius: 10px; }
+::-webkit-scrollbar { width: 0px; }
 
-@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-@keyframes sparkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-@keyframes dot-bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
-@keyframes slide-in { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 2000px; } }
-@keyframes progress { from { width: 0%; } to { width: 100%; } }
+/* ---- Animations ---- */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
-.animate-fade-up { animation: fadeUp 0.3s ease-out forwards; }
-.animate-shimmer { background: linear-gradient(90deg, transparent, rgba(138,180,248,0.05), transparent); background-size: 200% 100%; animation: shimmer 2s infinite; }
+@keyframes pulse-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1); }
+}
 
-.thinking-dots span { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--color-blue); margin: 0 2px; animation: dot-bounce 1.4s infinite ease-in-out both; }
-.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
-.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
+@keyframes word-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
-/* Markdown-like rendering for plan steps */
-.plan-step { border-left: 2px solid var(--color-border); transition: border-color 0.3s; }
-.plan-step.active { border-left-color: var(--color-blue); }
-.plan-step.done { border-left-color: var(--color-green); }
-.plan-step.failed { border-left-color: var(--color-red); }
+.anim-fade-up {
+  animation: fade-up 0.25s ease-out forwards;
+}
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  display: inline-block;
+  animation: pulse-dot 1.4s ease-in-out infinite both;
+}
+.thinking-dot:nth-child(1) { animation-delay: 0s; }
+.thinking-dot:nth-child(2) { animation-delay: 0.16s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.32s; }
+
+/* Streaming word animation */
+.stream-word {
+  opacity: 0;
+  animation: word-in 0.12s ease forwards;
+}
+
+/* Safe area insets */
+.safe-t { padding-top: env(safe-area-inset-top, 0px); }
+.safe-b { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
 input:focus, textarea:focus { outline: none; }

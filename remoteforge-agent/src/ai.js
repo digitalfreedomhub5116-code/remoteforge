@@ -8,7 +8,7 @@
  * retries on failure, and responds in natural language.
  */
 
-const { GoogleGenerativeAI, FunctionDeclarationSchemaType } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ---- Tool Definitions (what JARVIS can do) ----
 const TOOLS = [
@@ -18,9 +18,9 @@ const TOOLS = [
         name: 'run_powershell',
         description: 'Execute a PowerShell command on the Windows PC. Use this for any system operation: file management, network info, process control, installations, etc. Always use valid PowerShell syntax.',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {
-            command: { type: FunctionDeclarationSchemaType.STRING, description: 'The PowerShell command to execute' },
+            command: { type: 'STRING', description: 'The PowerShell command to execute' },
           },
           required: ['command'],
         },
@@ -29,9 +29,9 @@ const TOOLS = [
         name: 'open_application',
         description: 'Open/launch an application by name. Examples: chrome, notepad, vscode, discord, spotify, calculator, explorer, edge',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {
-            app_name: { type: FunctionDeclarationSchemaType.STRING, description: 'Name of the app to open' },
+            app_name: { type: 'STRING', description: 'Name of the app to open' },
           },
           required: ['app_name'],
         },
@@ -40,7 +40,7 @@ const TOOLS = [
         name: 'take_screenshot',
         description: 'Capture a screenshot of the current screen. Use when the user wants to see what is on their screen or verify something visually.',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {},
         },
       },
@@ -48,7 +48,7 @@ const TOOLS = [
         name: 'get_system_info',
         description: 'Get detailed system information: CPU usage, RAM, disk space, battery level, OS version.',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {},
         },
       },
@@ -56,9 +56,9 @@ const TOOLS = [
         name: 'type_text',
         description: 'Type text using the keyboard. The text will be typed into whatever window is currently focused. Use focus_window first to target a specific app.',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {
-            text: { type: FunctionDeclarationSchemaType.STRING, description: 'The text to type' },
+            text: { type: 'STRING', description: 'The text to type' },
           },
           required: ['text'],
         },
@@ -67,11 +67,11 @@ const TOOLS = [
         name: 'press_keys',
         description: 'Press a keyboard shortcut or key combination. Use for hotkeys like Ctrl+S, Ctrl+C, Alt+Tab, Enter, etc.',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {
             keys: {
-              type: FunctionDeclarationSchemaType.ARRAY,
-              items: { type: FunctionDeclarationSchemaType.STRING },
+              type: 'ARRAY',
+              items: { type: 'STRING' },
               description: 'Array of keys to press simultaneously. Examples: ["control","s"], ["alt","tab"], ["enter"]',
             },
           },
@@ -82,9 +82,9 @@ const TOOLS = [
         name: 'focus_window',
         description: 'Bring a specific application window to the foreground. Use before type_text to ensure text goes to the right app.',
         parameters: {
-          type: FunctionDeclarationSchemaType.OBJECT,
+          type: 'OBJECT',
           properties: {
-            window_title: { type: FunctionDeclarationSchemaType.STRING, description: 'The title or partial title of the window to focus' },
+            window_title: { type: 'STRING', description: 'The title or partial title of the window to focus' },
           },
           required: ['window_title'],
         },
@@ -142,7 +142,7 @@ function initAI(apiKey) {
 
   const genAI = new GoogleGenerativeAI(apiKey);
   model = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash-preview-05-20',
+    model: 'gemini-2.5-flash',
     tools: TOOLS,
     systemInstruction: SYSTEM_PROMPT,
     generationConfig: {

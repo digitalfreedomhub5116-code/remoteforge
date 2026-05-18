@@ -230,8 +230,8 @@ export default function App() {
       </header>
 
       {/* ---- CHAT AREA ---- */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-[640px] mx-auto px-4 py-6">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="max-w-[640px] mx-auto px-4 py-6" style={{ wordBreak: 'break-word' }}>
 
           {/* Empty state */}
           {commands.length === 0 && (
@@ -267,7 +267,7 @@ export default function App() {
 
                 {/* ---- User message ---- */}
                 <div className="flex justify-end mb-5">
-                <div className="max-w-[80%] ml-auto">
+                  <div style={{ maxWidth: '80%' }}>
                     <p className="text-[12px] text-text-muted mb-1.5 text-right font-medium">You</p>
                     <div className="bg-user-bg px-4 py-3 rounded-2xl rounded-br-md">
                       <p className="text-[15px] text-text leading-[1.55]">{cmd.raw_input}</p>

@@ -231,7 +231,7 @@ export default function App() {
 
       {/* ---- CHAT AREA ---- */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="max-w-[640px] mx-auto px-4 py-6" style={{ wordBreak: 'break-word' }}>
+        <div className="mx-auto px-4 py-6 overflow-hidden" style={{ maxWidth: '640px', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
 
           {/* Empty state */}
           {commands.length === 0 && (

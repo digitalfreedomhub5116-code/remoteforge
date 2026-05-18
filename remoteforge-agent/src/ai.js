@@ -1,156 +1,276 @@
 /**
- * RemoteForge - AI Command Interpreter
+ * RemoteForge — JARVIS AI Brain
  * 
- * Uses Google Gemini to translate natural language
- * into structured, executable PC commands.
- * Now supports keyboard/mouse control!
+ * Uses Gemini 2.5 Flash with Function Calling (tool use)
+ * to create a true conversational PC control agent.
+ * 
+ * The AI decides when to run commands, interprets results,
+ * retries on failure, and responds in natural language.
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, FunctionDeclarationSchemaType } = require('@google/generative-ai');
 
-const SYSTEM_PROMPT = `You are RemoteForge AI — an intelligent PC control agent running on a Windows machine.
+// ---- Tool Definitions (what JARVIS can do) ----
+const TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: 'run_powershell',
+        description: 'Execute a PowerShell command on the Windows PC. Use this for any system operation: file management, network info, process control, installations, etc. Always use valid PowerShell syntax.',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {
+            command: { type: FunctionDeclarationSchemaType.STRING, description: 'The PowerShell command to execute' },
+          },
+          required: ['command'],
+        },
+      },
+      {
+        name: 'open_application',
+        description: 'Open/launch an application by name. Examples: chrome, notepad, vscode, discord, spotify, calculator, explorer, edge',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {
+            app_name: { type: FunctionDeclarationSchemaType.STRING, description: 'Name of the app to open' },
+          },
+          required: ['app_name'],
+        },
+      },
+      {
+        name: 'take_screenshot',
+        description: 'Capture a screenshot of the current screen. Use when the user wants to see what is on their screen or verify something visually.',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: 'get_system_info',
+        description: 'Get detailed system information: CPU usage, RAM, disk space, battery level, OS version.',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: 'type_text',
+        description: 'Type text using the keyboard. The text will be typed into whatever window is currently focused. Use focus_window first to target a specific app.',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {
+            text: { type: FunctionDeclarationSchemaType.STRING, description: 'The text to type' },
+          },
+          required: ['text'],
+        },
+      },
+      {
+        name: 'press_keys',
+        description: 'Press a keyboard shortcut or key combination. Use for hotkeys like Ctrl+S, Ctrl+C, Alt+Tab, Enter, etc.',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {
+            keys: {
+              type: FunctionDeclarationSchemaType.ARRAY,
+              items: { type: FunctionDeclarationSchemaType.STRING },
+              description: 'Array of keys to press simultaneously. Examples: ["control","s"], ["alt","tab"], ["enter"]',
+            },
+          },
+          required: ['keys'],
+        },
+      },
+      {
+        name: 'focus_window',
+        description: 'Bring a specific application window to the foreground. Use before type_text to ensure text goes to the right app.',
+        parameters: {
+          type: FunctionDeclarationSchemaType.OBJECT,
+          properties: {
+            window_title: { type: FunctionDeclarationSchemaType.STRING, description: 'The title or partial title of the window to focus' },
+          },
+          required: ['window_title'],
+        },
+      },
+    ],
+  },
+];
 
-Your job: take a user's natural language request and translate it into one or more executable commands.
+// ---- JARVIS System Prompt ----
+const SYSTEM_PROMPT = `You are JARVIS — an advanced AI assistant integrated into a Windows PC. You control this computer on behalf of your user, just like Tony Stark's JARVIS.
 
-RESPOND ONLY WITH VALID JSON. No markdown, no explanation, no code fences.
+PERSONALITY:
+- Professional but warm, like a trusted butler
+- Concise and clear — no unnecessary rambling
+- Confident — you handle tasks without hesitation
+- Proactive — suggest next steps when helpful
 
-Response schema:
-{
-  "steps": [
-    {
-      "type": "shell" | "app" | "screenshot" | "system" | "keyboard",
-      "command": "the command string (see type-specific format below)",
-      "description": "short human-readable description",
-      "is_destructive": true | false
-    }
-  ],
-  "summary": "one-line summary of what you're doing for the user"
-}
+CAPABILITIES:
+You have direct control over this Windows PC through tools:
+- Run any PowerShell command (file operations, network, processes, installations)
+- Open and control applications
+- Type text and press keyboard shortcuts
+- Take screenshots to verify your work
+- Get system health information
 
-Available command types:
-- "shell": Run a PowerShell command. command = the exact PowerShell command.
-- "app": Open an application. command = the app name (e.g., "chrome", "notepad").
-- "screenshot": Capture the screen. command = "screenshot".
-- "system": Get CPU/RAM/disk info. command = "sysinfo".
-- "keyboard": Control keyboard input. command = JSON string with one of these actions:
-    Type text: {"action":"type","text":"hello world"}
-    Press hotkey: {"action":"hotkey","keys":["control","s"]}
-    Press single key: {"action":"key","key":"enter"}
+BEHAVIOR RULES:
+1. ALWAYS use tools to accomplish tasks — never just describe what you WOULD do
+2. If a command fails, TRY A DIFFERENT APPROACH silently — don't show errors to the user
+3. Interpret tool results and respond in plain English — NEVER show raw terminal output
+4. If you need to run multiple commands, do them in sequence
+5. For destructive operations (deleting files, formatting), WARN the user first and ask for confirmation
+6. When showing file listings or data, format it nicely — don't dump raw text
+7. If you're unsure what the user wants, ask a brief clarifying question
+8. After completing a task, briefly confirm what you did
+9. You can use $env:USERPROFILE for the user's home directory
+10. For complex tasks, briefly explain your approach, then execute
 
-KEYBOARD RULES:
-- To type text into a specific app, FIRST use a "shell" step to focus that window using PowerShell:
-  (New-Object -ComObject WScript.Shell).AppActivate('Window Title')
-- THEN use a "keyboard" step to type the text.
-- For hotkeys, valid key names: control, alt, shift, enter, tab, escape, backspace, delete, up, down, left, right, f1-f12, a-z, 0-9
-- Always focus the target window before typing!
+RESPONSE FORMAT:
+- Keep responses SHORT (2-4 sentences for simple tasks)
+- Use bullet points for lists
+- Use bold for important info
+- Don't use code blocks for responses — you're talking to a human, not a developer`;
 
-GENERAL RULES:
-1. All shell commands MUST be valid Windows PowerShell syntax.
-2. Use $env:USERPROFILE for user paths.
-3. For "open app" requests, use type "app" with the app name.
-4. For screenshot requests, set type to "screenshot".
-5. For system info requests, set type to "system".
-6. Mark is_destructive=true for anything that deletes, formats, or permanently modifies data.
-7. For multi-step tasks, break them into individual steps.
-8. NEVER generate commands that format drives, delete system files, or modify the registry unless explicitly asked.
-9. If the user asks a non-PC question (e.g., "what's the weather"), answer via: type="shell", command="echo Your answer here".
-10. If unsure, ask for clarification via echo.
-
-Examples:
-
-User: "open chrome"
-{"steps":[{"type":"app","command":"chrome","description":"Opening Google Chrome","is_destructive":false}],"summary":"Opening Google Chrome"}
-
-User: "what's my ip address"
-{"steps":[{"type":"shell","command":"(Invoke-WebRequest -Uri 'https://api.ipify.org').Content","description":"Getting public IP address","is_destructive":false}],"summary":"Fetching your public IP address"}
-
-User: "type hello in notepad"
-{"steps":[{"type":"shell","command":"(New-Object -ComObject WScript.Shell).AppActivate('Notepad')","description":"Focusing Notepad window","is_destructive":false},{"type":"keyboard","command":"{\\"action\\":\\"type\\",\\"text\\":\\"hello\\"}","description":"Typing hello into Notepad","is_destructive":false}],"summary":"Typing 'hello' in Notepad"}
-
-User: "press ctrl+s"
-{"steps":[{"type":"keyboard","command":"{\\"action\\":\\"hotkey\\",\\"keys\\":[\\"control\\",\\"s\\"]}","description":"Pressing Ctrl+S to save","is_destructive":false}],"summary":"Pressing Ctrl+S"}
-
-User: "clean up temp files"  
-{"steps":[{"type":"shell","command":"Remove-Item -Path $env:TEMP\\\\* -Recurse -Force -ErrorAction SilentlyContinue","description":"Deleting temporary files","is_destructive":true}],"summary":"Cleaning temporary files"}`;
-
-let ai = null;
 let model = null;
+const conversationHistories = new Map(); // deviceId -> chat history
 
 /**
  * Initialize the Gemini AI client
  */
 function initAI(apiKey) {
   if (!apiKey) {
-    console.log('⚠️  No GEMINI_API_KEY found. AI interpreter disabled — using basic pattern matching.');
+    console.log('⚠️  No GEMINI_API_KEY found — JARVIS brain disabled.');
     return false;
   }
 
-  ai = new GoogleGenerativeAI(apiKey);
-  model = ai.getGenerativeModel({ 
-    model: 'gemini-2.0-flash',
+  const genAI = new GoogleGenerativeAI(apiKey);
+  model = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash-preview-05-20',
+    tools: TOOLS,
+    systemInstruction: SYSTEM_PROMPT,
     generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 2048,
+      temperature: 0.4,
+      maxOutputTokens: 4096,
     },
   });
 
-  console.log('🧠 Gemini AI initialized (gemini-2.0-flash)');
+  console.log('🧠 JARVIS brain initialized (Gemini 2.5 Flash + Function Calling)');
   return true;
 }
 
 /**
- * Interpret a natural language command using Gemini
+ * Process a user message through JARVIS
+ * Returns: { text: string, screenshot_base64?: string }
+ * 
+ * This handles the full conversation loop:
+ * User message → AI thinks → AI calls tools → Agent executes → 
+ * Results fed back to AI → AI responds naturally
  */
-async function interpretCommand(userInput) {
+async function processWithJarvis(userMessage, deviceId, toolExecutor) {
   if (!model) {
-    return fallbackInterpret(userInput);
+    return { text: "I'm currently running in basic mode. Please add a Gemini API key to enable full JARVIS capabilities." };
+  }
+
+  // Get or create conversation history for this device
+  if (!conversationHistories.has(deviceId)) {
+    conversationHistories.set(deviceId, []);
+  }
+  const history = conversationHistories.get(deviceId);
+
+  // Keep last 20 messages for context (prevent token overflow)
+  if (history.length > 40) {
+    history.splice(0, history.length - 20);
   }
 
   try {
-    const chat = model.startChat({
-      history: [
-        { role: 'user', parts: [{ text: SYSTEM_PROMPT }] },
-        { role: 'model', parts: [{ text: '{"acknowledged": true}' }] },
-      ],
-    });
+    // Start chat with history
+    const chat = model.startChat({ history });
 
-    const result = await chat.sendMessage(userInput);
-    const text = result.response.text().trim();
+    let response = await sendWithRetry(chat, userMessage);
+    let screenshotBase64 = null;
 
-    // Clean any markdown fences
-    const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    // Function calling loop — AI may call multiple tools
+    let maxIterations = 10; // Safety limit
+    while (maxIterations-- > 0) {
+      const candidate = response.response.candidates?.[0];
+      if (!candidate) break;
 
-    if (!parsed.steps || !Array.isArray(parsed.steps)) {
-      throw new Error('Invalid AI response: missing steps array');
+      const parts = candidate.content?.parts || [];
+      const functionCalls = parts.filter(p => p.functionCall);
+
+      if (functionCalls.length === 0) break; // AI is done calling tools
+
+      // Execute each function call
+      const functionResponses = [];
+      for (const part of functionCalls) {
+        const { name, args } = part.functionCall;
+        console.log(`   🔧 JARVIS calling: ${name}(${JSON.stringify(args).slice(0, 80)})`);
+
+        let result;
+        try {
+          result = await toolExecutor(name, args);
+          // Capture screenshots
+          if (name === 'take_screenshot' && result.screenshot_base64) {
+            screenshotBase64 = result.screenshot_base64;
+          }
+        } catch (err) {
+          result = { success: false, error: err.message };
+        }
+
+        functionResponses.push({
+          functionResponse: {
+            name,
+            response: result,
+          },
+        });
+      }
+
+      // Send tool results back to AI for interpretation
+      response = await sendWithRetry(chat, functionResponses);
     }
 
-    return parsed;
+    // Extract the final text response
+    const text = response.response.text() || "Done.";
+
+    // Update conversation history
+    history.push({ role: 'user', parts: [{ text: userMessage }] });
+    history.push({ role: 'model', parts: [{ text }] });
+
+    return { text, screenshot_base64: screenshotBase64 };
+
   } catch (err) {
-    console.error('🧠 AI interpretation failed:', err.message);
-    console.log('   Falling back to basic detection...');
-    return fallbackInterpret(userInput);
+    console.error('🧠 JARVIS error:', err.message);
+
+    // Graceful fallback
+    if (err.message.includes('429') || err.message.includes('Resource exhausted')) {
+      return { text: "I'm a bit overloaded right now. Please wait a moment and try again. (Rate limit reached)" };
+    }
+
+    return { text: `I encountered an issue: ${err.message}. Try rephrasing your request.` };
   }
 }
 
 /**
- * Fallback: basic pattern matching when AI is unavailable
+ * Send message with retry logic for rate limits
  */
-function fallbackInterpret(input) {
-  const lower = input.toLowerCase().trim();
-
-  if (lower.includes('screenshot') || lower === 'ss') {
-    return { steps: [{ type: 'screenshot', command: 'screenshot', description: 'Taking screenshot', is_destructive: false }], summary: 'Taking a screenshot' };
+async function sendWithRetry(chat, message, maxRetries = 3) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await chat.sendMessage(message);
+    } catch (err) {
+      if (err.message.includes('429') && attempt < maxRetries - 1) {
+        const wait = (attempt + 1) * 2000; // 2s, 4s, 6s
+        console.log(`   ⏳ Rate limited, waiting ${wait / 1000}s...`);
+        await new Promise(r => setTimeout(r, wait));
+      } else {
+        throw err;
+      }
+    }
   }
-  if (lower.includes('sysinfo') || lower.includes('system info')) {
-    return { steps: [{ type: 'system', command: 'sysinfo', description: 'Getting system info', is_destructive: false }], summary: 'Getting system information' };
-  }
-  if (/^(open|launch|start)\s+/i.test(lower)) {
-    const app = input.replace(/^(open|launch|start)\s+/i, '').trim();
-    return { steps: [{ type: 'app', command: app, description: `Opening ${app}`, is_destructive: false }], summary: `Opening ${app}` };
-  }
-
-  return { steps: [{ type: 'shell', command: input, description: 'Running shell command', is_destructive: false }], summary: `Running: ${input}` };
 }
 
-module.exports = { initAI, interpretCommand };
+/**
+ * Clear conversation history for a device
+ */
+function clearHistory(deviceId) {
+  conversationHistories.delete(deviceId);
+}
+
+module.exports = { initAI, processWithJarvis, clearHistory };

@@ -20,7 +20,7 @@ const {
   executeFileCommand,
   executeKeyboardCommand,
 } = require('./executor');
-const { initAI, interpretCommand } = require('./ai');
+const { initAI, processWithJarvis } = require('./ai');
 
 // ============================================
 // Configuration
@@ -137,212 +137,88 @@ function startHeartbeat() {
 }
 
 /**
- * Execute a single step (used by both execute and plan modes)
+ * Tool executor — maps AI function calls to actual PC operations
  */
-async function executeStep(step) {
-  switch (step.type) {
-    case 'screenshot': {
+async function executeTool(toolName, args) {
+  switch (toolName) {
+    case 'run_powershell': {
+      const analysis = analyzeCommand(args.command);
+      if (!analysis.allowed) return { success: false, error: analysis.reason };
+      const result = await executeShellCommand(args.command, COMMAND_TIMEOUT);
+      return { success: result.success, output: result.stdout || '', error: result.stderr || '' };
+    }
+    case 'open_application':
+      return await executeAppCommand(args.app_name);
+    case 'take_screenshot': {
       const ss = await takeScreenshot();
-      return { success: ss.success, stdout: ss.success ? 'Screenshot captured' : '', stderr: ss.error || '', screenshot_base64: ss.screenshot_base64 };
+      return { success: ss.success, message: ss.success ? 'Screenshot captured successfully' : 'Screenshot failed', screenshot_base64: ss.screenshot_base64 };
     }
-    case 'system': {
+    case 'get_system_info': {
       const info = await getSystemInfo();
-      return { success: info.success, stdout: info.success ? JSON.stringify(info.info, null, 2) : '', stderr: info.error || '' };
+      return info.success ? { success: true, ...info.info } : { success: false, error: info.error };
     }
-    case 'app':
-      return await executeAppCommand(step.command);
-    case 'keyboard':
-      return await executeKeyboardCommand(step.command);
-    default: {
-      const analysis = analyzeCommand(step.command);
-      if (!analysis.allowed) return { success: false, stdout: '', stderr: analysis.reason };
-      return await executeShellCommand(step.command, COMMAND_TIMEOUT);
+    case 'type_text': {
+      const cmd = JSON.stringify({ action: 'type', text: args.text });
+      return await executeKeyboardCommand(cmd);
     }
+    case 'press_keys': {
+      const cmd = JSON.stringify({ action: 'hotkey', keys: args.keys });
+      return await executeKeyboardCommand(cmd);
+    }
+    case 'focus_window': {
+      const psCmd = `(New-Object -ComObject WScript.Shell).AppActivate('${args.window_title.replace(/'/g, "''")}')`;
+      const result = await executeShellCommand(psCmd, 5000);
+      await new Promise(r => setTimeout(r, 500)); // Wait for focus
+      return { success: result.success, message: result.success ? `Focused: ${args.window_title}` : 'Window not found' };
+    }
+    default:
+      return { success: false, error: `Unknown tool: ${toolName}` };
   }
 }
 
 /**
- * Process an incoming command — routes through AI brain first
+ * Process an incoming command — routes through JARVIS brain
  */
 async function processCommand(command) {
   const { id, raw_input, command_type } = command;
-  console.log(`\n⚡ Command received: "${raw_input}" [mode: ${command_type}]`);
+  console.log(`\n⚡ Command received: "${raw_input}"`);
 
-  // ---- PLAN MODE: Just return the plan, don't execute ----
-  if (command_type === 'plan') {
-    await supabase.from('commands').update({ status: 'planning', started_at: new Date().toISOString() }).eq('id', id);
-
-    try {
-      console.log('📋 Planning...');
-      const plan = await interpretCommand(raw_input);
-      console.log(`📋 Plan ready: ${plan.summary} (${plan.steps.length} steps)`);
-
-      // Return the plan as JSON so the UI can render it
-      await supabase.from('commands').update({
-        status: 'plan_ready',
-        parsed_command: plan.summary,
-        result_stdout: JSON.stringify(plan, null, 2),
-        completed_at: new Date().toISOString(),
-      }).eq('id', id);
-      return;
-    } catch (err) {
-      await supabase.from('commands').update({ status: 'failed', result_stderr: err.message, completed_at: new Date().toISOString() }).eq('id', id);
-      return;
-    }
-  }
-
-  // ---- EXECUTE_PLAN MODE: Execute a previously planned set of steps ----
-  if (command_type === 'execute_plan') {
-    console.log('▶ Implementing plan...');
-    await supabase.from('commands').update({ status: 'executing', started_at: new Date().toISOString() }).eq('id', id);
-
-    try {
-      // The plan JSON is stored in result_stdout from the planning phase
-      const { data: cmdData } = await supabase.from('commands').select('result_stdout').eq('id', id).single();
-      const plan = JSON.parse(cmdData.result_stdout);
-      
-      const allResults = [];
-      let allSuccess = true;
-      let screenshotBase64 = null;
-
-      for (let i = 0; i < plan.steps.length; i++) {
-        const step = plan.steps[i];
-        console.log(`   Step ${i + 1}/${plan.steps.length}: ${step.description}`);
-        const stepResult = await executeStep(step);
-        if (step.type === 'screenshot' && stepResult.screenshot_base64) screenshotBase64 = stepResult.screenshot_base64;
-        if (!stepResult.success) allSuccess = false;
-        allResults.push(`[${step.description}]\n${stepResult.stdout || stepResult.stderr || '(done)'}`);
-        if (!stepResult.success) { allResults.push('\n❌ Step failed — stopping.'); break; }
-      }
-
-      const updateData = {
-        status: allSuccess ? 'completed' : 'failed',
-        result_stdout: allResults.join('\n\n').slice(0, 50000),
-        completed_at: new Date().toISOString(),
-      };
-      if (screenshotBase64) updateData.result_screenshot = screenshotBase64;
-      await supabase.from('commands').update(updateData).eq('id', id);
-      console.log(`${allSuccess ? '✅' : '❌'} Plan implementation ${allSuccess ? 'complete' : 'failed'}`);
-      return;
-    } catch (err) {
-      await supabase.from('commands').update({ status: 'failed', result_stderr: err.message, completed_at: new Date().toISOString() }).eq('id', id);
-      return;
-    }
-  }
-
-  // ---- EXECUTE MODE (default): Interpret + execute immediately ----
-  // Mark as processing (AI is thinking)
-  await supabase
-    .from('commands')
-    .update({ status: 'processing', started_at: new Date().toISOString() })
-    .eq('id', id);
+  // Mark as processing (JARVIS is thinking)
+  await supabase.from('commands').update({ 
+    status: 'processing', 
+    started_at: new Date().toISOString() 
+  }).eq('id', id);
 
   try {
-    // Step 1: Ask AI to interpret the command
-    console.log('🧠 AI interpreting...');
-    const plan = await interpretCommand(raw_input);
-    console.log(`🧠 AI plan: ${plan.summary} (${plan.steps.length} step${plan.steps.length > 1 ? 's' : ''})`);
+    console.log('🧠 JARVIS thinking...');
 
-    // Update with AI summary
-    await supabase
-      .from('commands')
-      .update({ status: 'executing', parsed_command: plan.summary })
-      .eq('id', id);
+    // Send to JARVIS brain — it handles everything:
+    // thinking, tool calling, retrying, natural language response
+    const result = await processWithJarvis(raw_input, deviceId, executeTool);
 
-    // Step 2: Check for destructive steps
-    const hasDestructive = plan.steps.some(s => s.is_destructive);
-    if (hasDestructive) {
-      const destructiveDescs = plan.steps.filter(s => s.is_destructive).map(s => s.description).join(', ');
-      await supabase
-        .from('commands')
-        .update({
-          status: 'awaiting_confirmation',
-          requires_confirmation: true,
-          result_stderr: `⚠️ AI detected destructive action: ${destructiveDescs}\nPlease confirm from your phone.`,
-          parsed_command: plan.summary,
-        })
-        .eq('id', id);
-      console.log(`⚠️ Awaiting confirmation for destructive steps`);
-      return;
-    }
+    console.log(`✅ JARVIS: ${result.text.slice(0, 80)}...`);
 
-    // Step 3: Execute all steps
-    const allResults = [];
-    let allSuccess = true;
-    let screenshotBase64 = null;
-
-    for (let i = 0; i < plan.steps.length; i++) {
-      const step = plan.steps[i];
-      console.log(`   Step ${i + 1}/${plan.steps.length}: ${step.description} [${step.type}]`);
-
-      let stepResult;
-
-      switch (step.type) {
-        case 'screenshot': {
-          const ss = await takeScreenshot();
-          stepResult = { success: ss.success, stdout: ss.success ? 'Screenshot captured' : '', stderr: ss.error || '' };
-          if (ss.success) screenshotBase64 = ss.screenshot_base64;
-          break;
-        }
-        case 'system': {
-          const info = await getSystemInfo();
-          stepResult = { success: info.success, stdout: info.success ? JSON.stringify(info.info, null, 2) : '', stderr: info.error || '' };
-          break;
-        }
-        case 'app': {
-          stepResult = await executeAppCommand(step.command);
-          break;
-        }
-        case 'keyboard': {
-          stepResult = await executeKeyboardCommand(step.command);
-          break;
-        }
-        default: {
-          // Safety check on the actual command
-          const analysis = analyzeCommand(step.command);
-          if (!analysis.allowed) {
-            stepResult = { success: false, stdout: '', stderr: analysis.reason };
-          } else {
-            stepResult = await executeShellCommand(step.command, COMMAND_TIMEOUT);
-          }
-        }
-      }
-
-      if (!stepResult.success) allSuccess = false;
-      allResults.push(`[${step.description}]\n${stepResult.stdout || stepResult.stderr || '(no output)'}`);
-
-      // If a step fails, stop executing the rest
-      if (!stepResult.success) {
-        allResults.push(`\n❌ Step failed — skipping remaining steps.`);
-        break;
-      }
-    }
-
-    // Step 4: Send combined results back
-    const combinedOutput = allResults.join('\n\n');
+    // Send the natural language response back
     const updateData = {
-      status: allSuccess ? 'completed' : 'failed',
-      result_stdout: combinedOutput.slice(0, 50000) || null,
-      result_stderr: allSuccess ? null : 'One or more steps failed',
-      error_message: allSuccess ? null : 'Execution error',
+      status: 'completed',
+      result_stdout: result.text,
+      parsed_command: null,
       completed_at: new Date().toISOString(),
     };
 
-    if (screenshotBase64) {
-      updateData.result_screenshot = screenshotBase64;
+    if (result.screenshot_base64) {
+      updateData.result_screenshot = result.screenshot_base64;
     }
 
     await supabase.from('commands').update(updateData).eq('id', id);
 
-    console.log(`${allSuccess ? '✅' : '❌'} ${plan.summary}`);
   } catch (err) {
+    console.error('❌ JARVIS error:', err.message);
     await supabase.from('commands').update({
       status: 'failed',
-      result_stderr: err.message,
-      error_message: err.message,
+      result_stdout: `I ran into an issue: ${err.message}. Could you try rephrasing that?`,
       completed_at: new Date().toISOString(),
     }).eq('id', id);
-    console.error('❌ Error:', err.message);
   }
 }
 
@@ -447,14 +323,14 @@ async function main() {
   console.log('');
   console.log('╔══════════════════════════════════════╗');
   console.log('║     🔥 RemoteForge Desktop Agent     ║');
-  console.log('║       v2.0.0 — AI-Powered 🧠         ║');
+  console.log('║     v3.0.0 — JARVIS Mode 🤖          ║');
   console.log('╚══════════════════════════════════════╝');
   console.log('');
 
-  // Initialize Gemini AI
+  // Initialize JARVIS brain
   const aiReady = initAI(process.env.GEMINI_API_KEY);
   if (!aiReady) {
-    console.log('   (Running in basic mode — add GEMINI_API_KEY to .env for AI powers)');
+    console.log('   ⚠️ JARVIS brain offline — add GEMINI_API_KEY to .env');
   }
 
   // Step 1: Initialize Supabase

@@ -16,7 +16,7 @@ const TOOLS = [
     functionDeclarations: [
       {
         name: 'run_powershell',
-        description: 'Execute a PowerShell command on the Windows PC. Use this for any system operation: file management, network info, process control, installations, etc. Always use valid PowerShell syntax.',
+        description: 'Execute a PowerShell command on the Windows PC. Use this for any system operation: file management, network info, process control, installations, etc.',
         parameters: {
           type: 'OBJECT',
           properties: {
@@ -38,7 +38,7 @@ const TOOLS = [
       },
       {
         name: 'take_screenshot',
-        description: 'Capture a screenshot of the current screen. Use when the user wants to see what is on their screen or verify something visually.',
+        description: 'Capture a screenshot of the current screen. Use this to SEE what is on the screen right now. Call this AFTER performing UI actions (clicking, typing, focusing) to verify the result.',
         parameters: {
           type: 'OBJECT',
           properties: {},
@@ -54,18 +54,18 @@ const TOOLS = [
       },
       {
         name: 'type_text',
-        description: 'Type text using the keyboard. The text will be typed into whatever window is currently focused. Use focus_window first to target a specific app.',
+        description: 'Type text using the keyboard into the currently focused window. ALWAYS use focus_window FIRST to target the correct app. After typing, use take_screenshot to verify the text appeared correctly.',
         parameters: {
           type: 'OBJECT',
           properties: {
-            text: { type: 'STRING', description: 'The text to type' },
+            text: { type: 'STRING', description: 'The text to type (NOT the app name, just the content)' },
           },
           required: ['text'],
         },
       },
       {
         name: 'press_keys',
-        description: 'Press a keyboard shortcut or key combination. Use for hotkeys like Ctrl+S, Ctrl+C, Alt+Tab, Enter, etc.',
+        description: 'Press a keyboard shortcut or key combination. Examples: ["control","s"] for save, ["enter"] to submit, ["control","l"] to focus address bar, ["alt","tab"] to switch windows.',
         parameters: {
           type: 'OBJECT',
           properties: {
@@ -80,13 +80,26 @@ const TOOLS = [
       },
       {
         name: 'focus_window',
-        description: 'Bring a specific application window to the foreground. Use before type_text to ensure text goes to the right app.',
+        description: 'Bring a specific application window to the foreground by its title. Use this BEFORE type_text or click_at to ensure you are interacting with the right window.',
         parameters: {
           type: 'OBJECT',
           properties: {
-            window_title: { type: 'STRING', description: 'The title or partial title of the window to focus' },
+            window_title: { type: 'STRING', description: 'The title or partial title of the window to focus. Examples: "Notepad", "Chrome", "Antigravity", "Visual Studio Code"' },
           },
           required: ['window_title'],
+        },
+      },
+      {
+        name: 'click_at',
+        description: 'Click the mouse at specific screen coordinates (x, y). Use take_screenshot first to see the screen and identify where to click. Coordinates are in pixels from the top-left corner.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            x: { type: 'STRING', description: 'X coordinate (pixels from left edge)' },
+            y: { type: 'STRING', description: 'Y coordinate (pixels from top edge)' },
+            button: { type: 'STRING', description: 'Mouse button: "left" (default), "right", or "double"' },
+          },
+          required: ['x', 'y'],
         },
       },
     ],
@@ -238,7 +251,9 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
     let screenshotBase64 = null;
 
     // Function calling loop — AI may call multiple tools
-    let maxIterations = 10; // Safety limit
+    // After UI-interaction tools, we auto-capture a screenshot so AI can verify
+    const UI_TOOLS = new Set(['focus_window', 'type_text', 'press_keys', 'click_at']);
+    let maxIterations = 15; // Safety limit
     while (maxIterations-- > 0) {
       const candidate = response.response.candidates?.[0];
       if (!candidate) break;
@@ -250,6 +265,8 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
 
       // Execute each function call
       const functionResponses = [];
+      let didUIAction = false;
+
       for (const part of functionCalls) {
         const { name, args } = part.functionCall;
         console.log(`   🔧 JARVIS calling: ${name}(${JSON.stringify(args).slice(0, 80)})`);
@@ -257,10 +274,11 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
         let result;
         try {
           result = await toolExecutor(name, args);
-          // Capture screenshots
+          // Capture screenshots from explicit take_screenshot calls
           if (name === 'take_screenshot' && result.screenshot_base64) {
             screenshotBase64 = result.screenshot_base64;
           }
+          if (UI_TOOLS.has(name)) didUIAction = true;
         } catch (err) {
           result = { success: false, error: err.message };
         }
@@ -271,6 +289,28 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
             response: result,
           },
         });
+      }
+
+      // ---- VISUAL FEEDBACK: After UI actions, capture the screen so AI can see the result ----
+      if (didUIAction) {
+        try {
+          await new Promise(r => setTimeout(r, 400)); // Wait for UI to settle
+          const verifyShot = await toolExecutor('take_screenshot', {});
+          if (verifyShot.success && verifyShot.screenshot_base64) {
+            screenshotBase64 = verifyShot.screenshot_base64;
+            // Add the screenshot as an inline image in the response
+            functionResponses.push({
+              functionResponse: {
+                name: 'screen_after_action',
+                response: { note: 'This is a screenshot of the screen AFTER your actions. Use it to verify the result.' },
+              },
+            });
+            // We'll include the image inline with the function responses
+            console.log('   👁️ Post-action screenshot captured — AI can verify');
+          }
+        } catch (e) {
+          // Non-critical
+        }
       }
 
       // Send tool results back to AI for interpretation

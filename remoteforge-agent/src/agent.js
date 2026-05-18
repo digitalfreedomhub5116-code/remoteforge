@@ -171,6 +171,35 @@ async function executeTool(toolName, args) {
       await new Promise(r => setTimeout(r, 500)); // Wait for focus
       return { success: result.success, message: result.success ? `Focused: ${args.window_title}` : 'Window not found' };
     }
+    case 'click_at': {
+      const x = parseInt(args.x, 10);
+      const y = parseInt(args.y, 10);
+      const btn = args.button || 'left';
+      // Use PowerShell + user32.dll for reliable mouse click
+      let clickScript;
+      if (btn === 'double') {
+        clickScript = `
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class Mouse { [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo); }';
+[Mouse]::SetCursorPos(${x}, ${y}); Start-Sleep -Milliseconds 50;
+[Mouse]::mouse_event(0x0002, 0, 0, 0, 0); [Mouse]::mouse_event(0x0004, 0, 0, 0, 0); Start-Sleep -Milliseconds 80;
+[Mouse]::mouse_event(0x0002, 0, 0, 0, 0); [Mouse]::mouse_event(0x0004, 0, 0, 0, 0);`;
+      } else if (btn === 'right') {
+        clickScript = `
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class Mouse { [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo); }';
+[Mouse]::SetCursorPos(${x}, ${y}); Start-Sleep -Milliseconds 50;
+[Mouse]::mouse_event(0x0008, 0, 0, 0, 0); [Mouse]::mouse_event(0x0010, 0, 0, 0, 0);`;
+      } else {
+        clickScript = `
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class Mouse { [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo); }';
+[Mouse]::SetCursorPos(${x}, ${y}); Start-Sleep -Milliseconds 50;
+[Mouse]::mouse_event(0x0002, 0, 0, 0, 0); [Mouse]::mouse_event(0x0004, 0, 0, 0, 0);`;
+      }
+      const result = await executeShellCommand(clickScript, 5000);
+      return { success: result.success, message: `Clicked at (${x}, ${y}) with ${btn} button` };
+    }
+    case 'screen_after_action':
+      // This is a virtual tool — the screenshot is handled in the AI loop
+      return { success: true, message: 'Screenshot captured for verification' };
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }

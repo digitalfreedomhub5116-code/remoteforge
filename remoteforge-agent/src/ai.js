@@ -109,11 +109,12 @@ You have direct control over this Windows PC through tools:
 - Type text and press keyboard shortcuts
 - Take screenshots to verify your work
 - Get system health information
+- **VISION**: You can SEE the current screen! A screenshot is attached with each message. Use it to understand context.
 
 BEHAVIOR RULES:
 1. ALWAYS use tools to accomplish tasks — never just describe what you WOULD do
 2. If a command fails, TRY A DIFFERENT APPROACH silently — don't show errors to the user
-3. Interpret tool results and respond in plain English — NEVER show raw terminal output
+3. Interpret tool results and respond in plain English — NEVER show raw terminal output or error messages
 4. If you need to run multiple commands, do them in sequence
 5. For destructive operations (deleting files, formatting), WARN the user first and ask for confirmation
 6. When showing file listings or data, format it nicely — don't dump raw text
@@ -121,6 +122,8 @@ BEHAVIOR RULES:
 8. After completing a task, briefly confirm what you did
 9. You can use $env:USERPROFILE for the user's home directory
 10. For complex tasks, briefly explain your approach, then execute
+11. USE THE SCREEN CONTEXT: Look at the attached screenshot to understand what apps are open, what the user is looking at, and what state the PC is in. This helps you make smarter decisions.
+12. When the user says "type in X", LOOK at the screen to identify the correct window title, then use focus_window + type_text.
 
 RESPONSE FORMAT:
 - Keep responses SHORT (2-4 sentences for simple tasks)
@@ -180,10 +183,38 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
   }
 
   try {
+    // ---- VISION: Auto-capture screen before processing ----
+    let screenContext = null;
+    try {
+      console.log('   👁️ Capturing screen context...');
+      const ssResult = await toolExecutor('take_screenshot', {});
+      if (ssResult.success && ssResult.screenshot_base64) {
+        // Resize/compress for API efficiency (keep it under 1MB)
+        screenContext = ssResult.screenshot_base64.slice(0, 500000);
+        console.log('   👁️ Screen captured — JARVIS can see your screen');
+      }
+    } catch (e) {
+      console.log('   👁️ Screen capture skipped:', e.message);
+    }
+
+    // Build the message with vision
+    const messageParts = [];
+    if (screenContext) {
+      messageParts.push({
+        inlineData: {
+          mimeType: 'image/png',
+          data: screenContext,
+        },
+      });
+      messageParts.push({ text: `[Current screen is attached above]\n\nUser: ${userMessage}` });
+    } else {
+      messageParts.push({ text: userMessage });
+    }
+
     // Start chat with history
     const chat = model.startChat({ history });
 
-    let response = await sendWithRetry(chat, userMessage);
+    let response = await sendWithRetry(chat, messageParts);
     let screenshotBase64 = null;
 
     // Function calling loop — AI may call multiple tools
@@ -229,7 +260,7 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
     // Extract the final text response
     const text = response.response.text() || "Done.";
 
-    // Update conversation history
+    // Update conversation history (text only, no images for history to save tokens)
     history.push({ role: 'user', parts: [{ text: userMessage }] });
     history.push({ role: 'model', parts: [{ text }] });
 

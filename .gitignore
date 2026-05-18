@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Environment files (contain secrets)
+.env
+
+# Screenshots
+screenshots/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build output
+dist/
+build/

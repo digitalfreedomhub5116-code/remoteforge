@@ -30,7 +30,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const DEVICE_NAME = process.env.DEVICE_NAME || os.hostname();
 const COMMAND_TIMEOUT = parseInt(process.env.COMMAND_TIMEOUT_MS || '30000');
-const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL_MS || '15000');
+const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL_MS || '10000');
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('❌ Missing SUPABASE_URL or SUPABASE_ANON_KEY in .env');
@@ -47,6 +47,7 @@ let heartbeatTimer = null;
 let realtimeChannel = null;
 let healthCheckTimer = null;
 let reconnectAttempts = 0;
+let currentPairingCode = null;
 const MAX_RECONNECT_DELAY = 30000;
 
 /**
@@ -126,6 +127,71 @@ async function registerDevice() {
   }
 
   return deviceId;
+}
+
+// ============================================
+// Pairing Code System
+// ============================================
+
+/**
+ * Generate a 6-digit alphanumeric pairing code (A-Z, 0-9)
+ */
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I,O,0,1 to avoid confusion
+  let code = '';
+  const crypto = require('crypto');
+  const bytes = crypto.randomBytes(6);
+  for (let i = 0; i < 6; i++) {
+    code += chars[bytes[i] % chars.length];
+  }
+  return code;
+}
+
+/**
+ * Create a new pairing code for this device and store it in the DB.
+ * Returns the 6-character code string.
+ */
+async function createPairingCode() {
+  // Invalidate any existing unused codes for this device
+  await supabase
+    .from('pairing_tokens')
+    .update({ is_used: true })
+    .eq('pc_device_id', deviceId)
+    .eq('is_used', false);
+
+  const code = generateCode();
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
+
+  const { error } = await supabase
+    .from('pairing_tokens')
+    .insert({
+      user_id: userId,
+      pc_device_id: deviceId,
+      code: code,
+      expires_at: expiresAt,
+    });
+
+  if (error) {
+    console.error('❌ Failed to create pairing code:', error.message);
+    return null;
+  }
+
+  currentPairingCode = code;
+  console.log(`🔑 Pairing code: ${code} (expires in 5 minutes)`);
+
+  // Notify the Electron main process
+  if (typeof process.send === 'function') {
+    process.send({ type: 'pairing-code', code: code });
+  }
+
+  // Auto-regenerate before expiry (every 4 minutes)
+  setTimeout(() => {
+    if (deviceId && supabase) {
+      createPairingCode();
+    }
+  }, 4 * 60 * 1000);
+
+  return code;
 }
 
 /**
@@ -572,13 +638,16 @@ async function main() {
   // Step 5: Register device
   await registerDevice();
 
-  // Step 6: Start heartbeat
+  // Step 6: Generate pairing code
+  await createPairingCode();
+
+  // Step 7: Start heartbeat
   startHeartbeat();
 
-  // Step 7: Process any pending commands from while offline
+  // Step 8: Process any pending commands from while offline
   await processPendingCommands();
 
-  // Step 8: Subscribe to Realtime for new commands
+  // Step 9: Subscribe to Realtime for new commands
   subscribeToCommands();
 
   console.log('');

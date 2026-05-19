@@ -16,7 +16,10 @@ contextBridge.exposeInMainWorld('remoteforge', {
   restartAgent: () => ipcRenderer.invoke('restart-agent'),
   getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
-  
+
+  // Pairing code
+  getPairingCode: () => ipcRenderer.invoke('get-pairing-code'),
+
   // Live events
   onLog: (callback) => {
     ipcRenderer.on('log', (_, log) => callback(log));
@@ -26,5 +29,8 @@ contextBridge.exposeInMainWorld('remoteforge', {
   },
   onCommand: (callback) => {
     ipcRenderer.on('command', (_, cmd) => callback(cmd));
+  },
+  onPairingCode: (callback) => {
+    ipcRenderer.on('pairing-code', (_, code) => callback(code));
   },
 });

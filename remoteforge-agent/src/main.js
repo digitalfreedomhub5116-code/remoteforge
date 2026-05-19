@@ -26,6 +26,7 @@ let mainWindow = null;
 let agentProcess = null;
 let agentStatus = 'stopped'; // 'stopped' | 'starting' | 'running' | 'error'
 let lastLogs = [];
+let currentPairingCode = null;
 const MAX_LOGS = 100;
 
 // Auto-launch setup
@@ -221,10 +222,17 @@ function startAgent() {
     }
   });
 
-  // Listen for structured messages from the agent (command updates)
+  // Listen for structured messages from the agent (command updates, pairing codes)
   agentProcess.on('message', (msg) => {
-    if (msg && msg.type === 'command' && mainWindow && !mainWindow.isDestroyed()) {
+    if (!msg) return;
+    if (msg.type === 'command' && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('command', msg.data);
+    }
+    if (msg.type === 'pairing-code') {
+      currentPairingCode = msg.code;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('pairing-code', msg.code);
+      }
     }
   });
 
@@ -334,6 +342,9 @@ function showStatusWindow() {
     // Send current state
     mainWindow.webContents.send('status', agentStatus);
     mainWindow.webContents.send('logs', lastLogs);
+    if (currentPairingCode) {
+      mainWindow.webContents.send('pairing-code', currentPairingCode);
+    }
   });
 
   mainWindow.on('close', (event) => {
@@ -489,6 +500,19 @@ ipcMain.handle('sign-in', async (_, email, password) => {
 
   addLog(`✅ Signed in as ${email}`);
 
+  // Enable auto-launch on first sign-in
+  if (autoLauncher) {
+    try {
+      const isEnabled = await autoLauncher.isEnabled();
+      if (!isEnabled) {
+        await autoLauncher.enable();
+        addLog('🚀 Auto-start on boot enabled');
+      }
+    } catch (e) {
+      // Non-critical
+    }
+  }
+
   // Close login, open status, start agent
   if (loginWindow && !loginWindow.isDestroyed()) {
     loginWindow.close();
@@ -612,6 +636,7 @@ ipcMain.handle('set-auto-launch', async (_, enabled) => {
   if (enabled) await autoLauncher.enable();
   else await autoLauncher.disable();
 });
+ipcMain.handle('get-pairing-code', () => currentPairingCode);
 
 // ============================================
 // App Lifecycle

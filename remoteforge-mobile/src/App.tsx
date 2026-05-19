@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from './lib/supabase';
 import AuthPage from './components/auth-page';
-import ConnectScreen from './components/connect-screen';
+import PairingScreen from './components/pairing-screen';
 import ChatScreen from './components/chat-screen';
 import ProfileScreen from './components/profile-screen';
 import './App.css';
@@ -9,7 +9,12 @@ import './App.css';
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
-export type Device = { id: string; device_name: string; is_online: boolean };
+export type Device = {
+  id: string;
+  device_name: string;
+  is_online: boolean;
+  last_seen_at?: string;
+};
 export type Command = {
   id: string; raw_input: string; command_type: string; status: string;
   result_stdout?: string; result_stderr?: string; result_screenshot?: string;
@@ -21,6 +26,16 @@ export type UserProfile = {
   name: string;
   avatar_url?: string;
 };
+
+export type ConnectionStatus = 'connected' | 'checking' | 'offline';
+
+export function computeConnectionStatus(device: Device): ConnectionStatus {
+  if (!device.last_seen_at) return 'offline';
+  const diff = Date.now() - new Date(device.last_seen_at).getTime();
+  if (diff < 15000) return 'connected';
+  if (diff < 30000) return 'checking';
+  return 'offline';
+}
 
 type Screen = 'chat' | 'history' | 'profile';
 
@@ -54,6 +69,7 @@ export default function App() {
   const [commands, setCommands] = useState<Command[]>([]);
   const [screen, setScreen] = useState<Screen>('chat');
   const [streamedIds, setStreamedIds] = useState<Set<string>>(new Set());
+  const [isPaired, setIsPaired] = useState(false);
 
   const chatEnd = useRef<HTMLDivElement>(null);
 
@@ -90,24 +106,44 @@ export default function App() {
         event: 'UPDATE', schema: 'public', table: 'devices',
       }, (p) => {
         setDevices(prev => prev.map(d => d.id === p.new.id
-          ? { ...d, is_online: p.new.is_online } as Device
+          ? { ...d, is_online: p.new.is_online, last_seen_at: p.new.last_seen_at } as Device
           : d
         ));
       }).subscribe();
 
-    return () => { supabase.removeChannel(deviceCh); };
+    // Poll device status every 10s for accurate last_seen_at
+    const devicePoll = setInterval(loadDevices, 10000);
+
+    return () => {
+      supabase.removeChannel(deviceCh);
+      clearInterval(devicePoll);
+    };
   }, [session]);
 
   async function loadDevices() {
+    // First, mark stale devices offline on the server
+    await supabase.rpc('mark_stale_devices_offline').catch(() => {});
+
     const { data } = await supabase
       .from('devices')
-      .select('id, device_name, is_online')
+      .select('id, device_name, is_online, last_seen_at')
       .eq('device_type', 'pc')
       .order('is_online', { ascending: false });
     if (data) {
       setDevices(data);
-      if (data.length > 0 && !selectedDevice) setSelectedDevice(data[0].id);
+      if (data.length > 0 && !selectedDevice) {
+        setSelectedDevice(data[0].id);
+        setIsPaired(true); // They have a device already
+      }
+      if (data.length > 0) setIsPaired(true);
     }
+  }
+
+  /* ---- Handle Pairing ---- */
+  function handlePaired(deviceId: string, _deviceName: string) {
+    setSelectedDevice(deviceId);
+    setIsPaired(true);
+    loadDevices();
   }
 
   /* ---- Commands ---- */
@@ -130,8 +166,7 @@ export default function App() {
         }
       });
 
-    // Polling fallback: re-fetch commands every 5s to catch any missed Realtime events
-    // This ensures "pending" messages eventually get their replies even if Realtime drops
+    // Polling fallback every 5s
     const pollTimer = setInterval(async () => {
       const { data } = await supabase
         .from('commands')
@@ -141,7 +176,6 @@ export default function App() {
         .limit(50);
       if (data) {
         setCommands(prev => {
-          // Merge: update existing, add new
           const map = new Map(prev.map(c => [c.id, c]));
           let changed = false;
           for (const cmd of data) {
@@ -197,6 +231,25 @@ export default function App() {
     });
   }
 
+  /* ---- Retry a timed-out command ---- */
+  async function retryCommand(cmd: Command) {
+    // Create a new command with the same input
+    if (!selectedDevice || !session) return;
+    await supabase.from('commands').insert({
+      user_id: session.user.id,
+      pc_device_id: selectedDevice,
+      raw_input: cmd.raw_input,
+      command_type: cmd.command_type,
+      parsed_command: null,
+      status: 'pending',
+    });
+  }
+
+  /* ---- Cancel a pending command ---- */
+  async function cancelCommand(id: string) {
+    await supabase.from('commands').update({ status: 'cancelled', result_stdout: 'Cancelled by user' }).eq('id', id);
+  }
+
   async function confirmCommand(id: string, yes: boolean) {
     if (yes) await supabase.from('commands').update({ status: 'pending', requires_confirmation: false, confirmed_at: new Date().toISOString() }).eq('id', id);
     else await supabase.from('commands').update({ status: 'cancelled' }).eq('id', id);
@@ -208,6 +261,7 @@ export default function App() {
     setDevices([]);
     setSelectedDevice(null);
     setCommands([]);
+    setIsPaired(false);
   }
 
   /* ================================================================ */
@@ -226,13 +280,15 @@ export default function App() {
   // Not logged in
   if (!session) return <AuthPage />;
 
-  // No device connected
-  const connectedDevice = devices.find(d => d.id === selectedDevice);
-  if (devices.length === 0 || !connectedDevice) {
-    return <ConnectScreen user={userProfile!} onRefresh={loadDevices} onSignOut={signOut} />;
+  // No device paired — show pairing screen
+  if (!isPaired || devices.length === 0) {
+    return <PairingScreen user={userProfile!} onPaired={handlePaired} onSignOut={signOut} />;
   }
 
   // Main app
+  const connectedDevice = devices.find(d => d.id === selectedDevice) || devices[0];
+  const connectionStatus = computeConnectionStatus(connectedDevice);
+
   return (
     <div className="app-shell">
       {/* Screen Content */}
@@ -244,10 +300,13 @@ export default function App() {
             commands={commands}
             streamedIds={streamedIds}
             chatEnd={chatEnd}
+            connectionStatus={connectionStatus}
             onSend={send}
             onConfirm={confirmCommand}
             onMarkStreamed={markStreamed}
             onSelectDevice={setSelectedDevice}
+            onRetry={retryCommand}
+            onCancel={cancelCommand}
           />
         )}
         {screen === 'history' && (

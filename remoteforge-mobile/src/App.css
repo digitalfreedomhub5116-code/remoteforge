@@ -785,3 +785,217 @@
 
 /* ---- Scrollbar ---- */
 ::-webkit-scrollbar { width: 0px; }
+
+/* ============================================ */
+/*  Pairing Screen                              */
+/* ============================================ */
+.pairing-screen {
+  height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: #0a0a0b; position: relative; overflow: hidden;
+}
+.pairing-bg { position: absolute; inset: 0; pointer-events: none; }
+.pairing-orb {
+  position: absolute; border-radius: 50%;
+  filter: blur(80px); opacity: 0.15;
+}
+.pairing-orb-1 {
+  width: 300px; height: 300px; background: #8ab4f8;
+  top: -100px; right: -80px; animation: float 18s ease-in-out infinite;
+}
+.pairing-orb-2 {
+  width: 250px; height: 250px; background: #a78bfa;
+  bottom: -80px; left: -60px; animation: float 22s ease-in-out infinite reverse;
+}
+
+.pairing-content {
+  position: relative; z-index: 1; text-align: center;
+  padding: 32px 24px; width: 100%; max-width: 400px;
+}
+.pairing-greeting {
+  font-size: 16px; color: #9a9aa5; margin-bottom: 24px;
+}
+.pairing-illustration {
+  margin-bottom: 20px; display: flex; justify-content: center;
+}
+.pairing-icon-wrap {
+  position: relative; width: 80px; height: 80px;
+  display: flex; align-items: center; justify-content: center;
+}
+.pairing-pulse-ring {
+  position: absolute; inset: -12px; border-radius: 50%;
+  border: 2px solid rgba(138,180,248,0.2);
+  animation: pulse-ring 2s ease-out infinite;
+}
+.pairing-pulse-ring.delay { animation-delay: 1s; }
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+.pairing-check {
+  position: absolute; bottom: -4px; right: -4px;
+  background: #0a0a0b; border-radius: 50%; padding: 2px;
+  animation: fade-up 0.3s ease;
+}
+.pairing-title {
+  font-size: 22px; font-weight: 700; color: #f0f0f2; margin-bottom: 8px;
+}
+.pairing-subtitle {
+  font-size: 14px; color: #7a7a85; line-height: 1.6; margin-bottom: 28px;
+}
+.pairing-success-msg h1 {
+  font-size: 22px; color: #34d399; margin-bottom: 8px;
+}
+.pairing-success-msg p {
+  font-size: 14px; color: #7a7a85;
+}
+
+/* Code Input Boxes */
+.pairing-inputs {
+  display: flex; gap: 8px; justify-content: center; margin-bottom: 16px;
+}
+.pairing-input {
+  width: 44px; height: 56px; text-align: center;
+  font-size: 22px; font-weight: 700; letter-spacing: 0;
+  background: rgba(255,255,255,0.03);
+  border: 1.5px solid rgba(255,255,255,0.08);
+  border-radius: 12px; color: #f0f0f2;
+  font-family: 'Inter', monospace;
+  outline: none; transition: all 0.2s;
+  text-transform: uppercase;
+}
+.pairing-input:focus {
+  border-color: #8ab4f8;
+  box-shadow: 0 0 0 3px rgba(138,180,248,0.15);
+}
+.pairing-input.filled {
+  border-color: rgba(138,180,248,0.3);
+  background: rgba(138,180,248,0.06);
+}
+.pairing-input.error {
+  border-color: rgba(248,113,113,0.5);
+  animation: shake 0.4s ease;
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.pairing-error {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  color: #f87171; font-size: 13px; margin-bottom: 16px;
+  animation: fade-up 0.2s ease;
+}
+.pairing-loading {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  color: #8ab4f8; font-size: 13px; margin-bottom: 16px;
+}
+.pairing-spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(138,180,248,0.2);
+  border-top-color: #8ab4f8;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+.pairing-help {
+  margin-top: 24px; text-align: left;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 12px; padding: 16px;
+}
+.pairing-help p {
+  font-size: 13px; color: #7a7a85; margin-bottom: 8px; font-weight: 500;
+}
+.pairing-help ul {
+  list-style: none; padding: 0;
+}
+.pairing-help li {
+  font-size: 12px; color: #5a5a65; padding: 3px 0;
+  padding-left: 16px; position: relative;
+}
+.pairing-help li::before {
+  content: '•'; position: absolute; left: 4px; color: #8ab4f8;
+}
+.pairing-signout {
+  margin-top: 20px; background: none; border: none;
+  color: #6a6a75; font-size: 13px; cursor: pointer;
+  font-family: inherit; padding: 8px 16px;
+}
+.pairing-signout:hover { color: #f87171; }
+
+/* ============================================ */
+/*  Connection Status & Offline Banner           */
+/* ============================================ */
+.pulse-dot {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(52,211,153,0); }
+}
+.device-status.checking span:last-child { color: #fbbf24; }
+.device-status.offline span:last-child { color: #6a6a75; font-size: 11px; }
+
+.offline-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px; background: rgba(248,113,113,0.06);
+  border-bottom: 1px solid rgba(248,113,113,0.1);
+  color: #f87171; font-size: 12px; flex-shrink: 0;
+}
+
+/* ============================================ */
+/*  Timeout & Retry                             */
+/* ============================================ */
+.ai-avatar.warn { background: rgba(251,191,36,0.1); }
+.timeout-bubble { border-color: rgba(251,191,36,0.15) !important; }
+.msg-timeout-text {
+  font-size: 13px; color: #fbbf24; line-height: 1.5; margin-bottom: 8px;
+}
+.timeout-actions {
+  display: flex; gap: 8px;
+}
+.timeout-btn {
+  padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
+  border: none; cursor: pointer; font-family: inherit;
+  display: flex; align-items: center; gap: 5px; transition: all 0.15s;
+}
+.timeout-btn.retry {
+  background: rgba(138,180,248,0.12); color: #8ab4f8;
+}
+.timeout-btn.retry:hover { background: rgba(138,180,248,0.2); }
+.timeout-btn.cancel {
+  background: rgba(255,255,255,0.04); color: #6a6a75;
+}
+.timeout-btn.cancel:hover { background: rgba(255,255,255,0.08); }
+
+.msg-cancelled {
+  color: #6a6a75; font-size: 13px; font-style: italic;
+}
+
+/* ============================================ */
+/*  Offline Send Warning                         */
+/* ============================================ */
+.offline-send-warning {
+  padding: 12px 16px; background: rgba(251,191,36,0.06);
+  border-top: 1px solid rgba(251,191,36,0.1);
+  animation: fade-up 0.2s ease;
+}
+.offline-send-warning p {
+  font-size: 13px; color: #fbbf24; margin-bottom: 10px; line-height: 1.5;
+}
+.offline-warning-actions {
+  display: flex; gap: 8px;
+}
+.ow-btn {
+  padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  border: none; cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.ow-btn.send {
+  background: rgba(138,180,248,0.15); color: #8ab4f8;
+}
+.ow-btn.send:hover { background: rgba(138,180,248,0.25); }
+.ow-btn.cancel {
+  background: rgba(255,255,255,0.04); color: #7a7a85;
+}
+.ow-btn.cancel:hover { background: rgba(255,255,255,0.08); }
+

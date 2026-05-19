@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { Device, Command } from '../App';
+import type { Device, Command, ConnectionStatus } from '../App';
 
 /* ---- Streaming Text ---- */
 function StreamingText({ text, shouldAnimate }: { text: string; shouldAnimate: boolean }) {
@@ -28,6 +28,43 @@ function StreamingText({ text, shouldAnimate }: { text: string; shouldAnimate: b
   );
 }
 
+/* ---- Connection Status Label ---- */
+function ConnectionLabel({ status, device }: { status: ConnectionStatus; device: Device }) {
+  if (status === 'connected') {
+    return (
+      <div className="device-status">
+        <span className="status-dot success pulse-dot" />
+        <span>Connected</span>
+      </div>
+    );
+  }
+  if (status === 'checking') {
+    return (
+      <div className="device-status checking">
+        <span className="status-dot warning" />
+        <span>Checking...</span>
+      </div>
+    );
+  }
+
+  // Offline — show how long ago
+  const lastSeen = device.last_seen_at ? new Date(device.last_seen_at) : null;
+  let ago = '';
+  if (lastSeen) {
+    const diff = Math.floor((Date.now() - lastSeen.getTime()) / 1000);
+    if (diff < 60) ago = `${diff}s ago`;
+    else if (diff < 3600) ago = `${Math.floor(diff / 60)}m ago`;
+    else ago = `${Math.floor(diff / 3600)}h ago`;
+  }
+
+  return (
+    <div className="device-status offline">
+      <span className="status-dot error" />
+      <span>Offline{ago ? ` · last seen ${ago}` : ''}</span>
+    </div>
+  );
+}
+
 /* ---- Quick Actions ---- */
 const QUICK_ACTIONS = [
   { icon: '📸', label: 'Screenshot', cmd: 'Take a screenshot' },
@@ -36,25 +73,70 @@ const QUICK_ACTIONS = [
   { icon: '📂', label: 'Files', cmd: 'Organize files' },
 ];
 
+/* ---- Command Timeout Tracker ---- */
+const COMMAND_TIMEOUT_MS = 30000;
+
+function useCommandTimeouts(commands: Command[]) {
+  const [timedOutIds, setTimedOutIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const pending = commands.filter(c => c.status === 'pending');
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    for (const cmd of pending) {
+      const elapsed = Date.now() - new Date(cmd.created_at).getTime();
+      const remaining = COMMAND_TIMEOUT_MS - elapsed;
+
+      if (remaining <= 0) {
+        setTimedOutIds(prev => new Set(prev).add(cmd.id));
+      } else {
+        const timer = setTimeout(() => {
+          setTimedOutIds(prev => new Set(prev).add(cmd.id));
+        }, remaining);
+        timers.push(timer);
+      }
+    }
+
+    // Clear timed-out status for commands that are no longer pending
+    setTimedOutIds(prev => {
+      const next = new Set(prev);
+      for (const id of prev) {
+        const cmd = commands.find(c => c.id === id);
+        if (cmd && cmd.status !== 'pending') next.delete(id);
+      }
+      return next;
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [commands]);
+
+  return timedOutIds;
+}
+
 interface Props {
   device: Device;
   devices: Device[];
   commands: Command[];
   streamedIds: Set<string>;
   chatEnd: React.RefObject<HTMLDivElement | null>;
+  connectionStatus: ConnectionStatus;
   onSend: (input: string, mode: 'execute' | 'plan') => void;
   onConfirm: (id: string, yes: boolean) => void;
   onMarkStreamed: (id: string) => void;
   onSelectDevice: (id: string) => void;
+  onRetry: (cmd: Command) => void;
+  onCancel: (id: string) => void;
 }
 
 export default function ChatScreen({
-  device, devices, commands, streamedIds, chatEnd,
-  onSend, onConfirm, onMarkStreamed, onSelectDevice
+  device, devices, commands, streamedIds, chatEnd, connectionStatus,
+  onSend, onConfirm, onMarkStreamed, onSelectDevice, onRetry, onCancel
 }: Props) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'execute' | 'plan'>('execute');
+  const [showOfflineWarning, setShowOfflineWarning] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const timedOutIds = useCommandTimeouts(commands);
 
   useEffect(() => {
     if (inputRef.current) {
@@ -65,6 +147,20 @@ export default function ChatScreen({
 
   function handleSend() {
     if (!input.trim()) return;
+
+    // Show offline warning if PC is offline
+    if (connectionStatus === 'offline' && !showOfflineWarning) {
+      setShowOfflineWarning(true);
+      return;
+    }
+
+    setShowOfflineWarning(false);
+    onSend(input, mode);
+    setInput('');
+  }
+
+  function sendAnyway() {
+    setShowOfflineWarning(false);
     onSend(input, mode);
     setInput('');
   }
@@ -91,10 +187,7 @@ export default function ChatScreen({
             ) : (
               <span className="device-name">{device.device_name}</span>
             )}
-            <div className="device-status">
-              <span className={`status-dot ${device.is_online ? 'success' : 'error'}`} />
-              <span>{device.is_online ? 'Online' : 'Offline'}</span>
-            </div>
+            <ConnectionLabel status={connectionStatus} device={device} />
           </div>
         </div>
         <div className="chat-header-right">
@@ -104,6 +197,16 @@ export default function ChatScreen({
           </div>
         </div>
       </header>
+
+      {/* Offline Banner */}
+      {connectionStatus === 'offline' && (
+        <div className="offline-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span>PC is offline — waiting for it to come online...</span>
+        </div>
+      )}
 
       {/* Messages */}
       <main className="chat-messages">
@@ -132,7 +235,9 @@ export default function ChatScreen({
           {/* Messages */}
           {commands.map((cmd) => {
             const isActive = cmd.status === 'processing' || cmd.status === 'executing' || cmd.status === 'planning';
-            const isDone = cmd.status === 'completed' || cmd.status === 'failed';
+            const isDone = cmd.status === 'completed' || cmd.status === 'failed' || cmd.status === 'cancelled';
+            const isPending = cmd.status === 'pending';
+            const isTimedOut = timedOutIds.has(cmd.id);
             const shouldStream = isDone && !streamedIds.has(cmd.id);
 
             if (shouldStream && cmd.result_stdout) {
@@ -151,7 +256,7 @@ export default function ChatScreen({
                 </div>
 
                 {/* AI response */}
-                {cmd.status !== 'pending' && (
+                {isPending && !isTimedOut && (
                   <div className="msg msg-ai">
                     <div className="ai-avatar">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8ab4f8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -159,12 +264,63 @@ export default function ChatScreen({
                       </svg>
                     </div>
                     <div className="msg-bubble ai-bubble">
-                      {isActive && (
-                        <div className="thinking-dots">
-                          <span /><span /><span />
-                        </div>
-                      )}
-                      {cmd.result_stdout && !isActive && (
+                      <div className="thinking-dots">
+                        <span /><span /><span />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Timed out - no response */}
+                {isPending && isTimedOut && (
+                  <div className="msg msg-ai">
+                    <div className="ai-avatar warn">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                    </div>
+                    <div className="msg-bubble ai-bubble timeout-bubble">
+                      <p className="msg-timeout-text">
+                        {connectionStatus === 'offline'
+                          ? '⚠️ Your PC is offline. This message will be delivered when it comes back online.'
+                          : "⚠️ JARVIS didn't respond. The agent may be busy or restarting."
+                        }
+                      </p>
+                      <div className="timeout-actions">
+                        <button className="timeout-btn retry" onClick={() => onRetry(cmd)}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+                          Retry
+                        </button>
+                        <button className="timeout-btn cancel" onClick={() => onCancel(cmd.id)}>Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isActive && (
+                  <div className="msg msg-ai">
+                    <div className="ai-avatar">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8ab4f8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" />
+                      </svg>
+                    </div>
+                    <div className="msg-bubble ai-bubble">
+                      <div className="thinking-dots">
+                        <span /><span /><span />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isDone && (
+                  <div className="msg msg-ai">
+                    <div className="ai-avatar">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8ab4f8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5" />
+                      </svg>
+                    </div>
+                    <div className="msg-bubble ai-bubble">
+                      {cmd.result_stdout && (
                         <StreamingText text={cmd.result_stdout} shouldAnimate={shouldStream} />
                       )}
                       {cmd.result_screenshot && (
@@ -174,6 +330,9 @@ export default function ChatScreen({
                       )}
                       {cmd.result_stderr && !cmd.result_stdout && (
                         <p className="msg-error">{cmd.result_stderr}</p>
+                      )}
+                      {!cmd.result_stdout && !cmd.result_stderr && cmd.status === 'cancelled' && (
+                        <p className="msg-cancelled">Cancelled</p>
                       )}
                       {cmd.requires_confirmation && cmd.status === 'awaiting_confirmation' && (
                         <div className="confirm-btns">
@@ -191,6 +350,17 @@ export default function ChatScreen({
         </div>
       </main>
 
+      {/* Offline Send Warning */}
+      {showOfflineWarning && (
+        <div className="offline-send-warning">
+          <p>⚠️ Your PC is offline. Send anyway? It'll be delivered when the PC comes online.</p>
+          <div className="offline-warning-actions">
+            <button className="ow-btn send" onClick={sendAnyway}>Send Anyway</button>
+            <button className="ow-btn cancel" onClick={() => setShowOfflineWarning(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <div className="chat-input-bar">
         <div className="input-container">
@@ -201,7 +371,6 @@ export default function ChatScreen({
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            disabled={!device.is_online}
           />
           {input.trim() && (
             <button className="send-btn" onClick={handleSend}>

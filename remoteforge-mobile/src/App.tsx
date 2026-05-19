@@ -121,21 +121,25 @@ export default function App() {
   }, [session]);
 
   async function loadDevices() {
-    // First, mark stale devices offline on the server
-    await supabase.rpc('mark_stale_devices_offline').catch(() => {});
-
     const { data } = await supabase
       .from('devices')
       .select('id, device_name, is_online, last_seen_at')
       .eq('device_type', 'pc')
       .order('is_online', { ascending: false });
     if (data) {
-      setDevices(data);
-      if (data.length > 0 && !selectedDevice) {
-        setSelectedDevice(data[0].id);
-        setIsPaired(true); // They have a device already
+      // Compute true online status from heartbeat freshness (< 30s = online)
+      const enriched = data.map(d => ({
+        ...d,
+        is_online: d.last_seen_at
+          ? (Date.now() - new Date(d.last_seen_at).getTime()) < 30000
+          : false,
+      }));
+      setDevices(enriched);
+      if (enriched.length > 0 && !selectedDevice) {
+        setSelectedDevice(enriched[0].id);
+        setIsPaired(true);
       }
-      if (data.length > 0) setIsPaired(true);
+      if (enriched.length > 0) setIsPaired(true);
     }
   }
 

@@ -603,8 +603,9 @@ async function main() {
   });
 
   if (sessionError) {
-    console.error('❌ Session expired. Run: node src/setup.js');
-    process.exit(1);
+    console.error('❌ Session expired — need to re-login');
+    // Exit with code 2 to signal main.js to show login window
+    process.exit(2);
   }
 
   // Step 4: Listen for token refreshes and save them + reconnect Realtime

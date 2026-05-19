@@ -17,15 +17,9 @@
       "output": "dist-electron"
     },
     "win": {
-      "target": "nsis",
-      "icon": "assets/icon.png"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "assets/icon.png",
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "target": "portable",
+      "icon": "assets/icon.png",
+      "signAndEditExecutable": false
     },
     "files": [
       "src/**/*",

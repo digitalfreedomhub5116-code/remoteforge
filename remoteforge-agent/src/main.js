@@ -152,7 +152,7 @@ function updateTrayMenu() {
       label: 'Open Web Dashboard',
       type: 'normal',
       click: () => {
-        shell.openExternal('https://remoteforge-mobile-production.up.railway.app');
+        shell.openExternal('https://remoteforge-production.up.railway.app');
       },
     },
     { type: 'separator' },
@@ -215,6 +215,13 @@ function startAgent() {
         agentStatus = 'running';
         updateTrayMenu();
       }
+    }
+  });
+
+  // Listen for structured messages from the agent (command updates)
+  agentProcess.on('message', (msg) => {
+    if (msg && msg.type === 'command' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('command', msg.data);
     }
   });
 
@@ -362,6 +369,9 @@ ipcMain.handle('set-auto-launch', async (_, enabled) => {
 app.on('ready', () => {
   createTray();
   
+  // Show the status window on first launch
+  showStatusWindow();
+
   // Auto-start the agent when the app opens
   startAgent();
 });

@@ -213,6 +213,9 @@ async function processCommand(command) {
   const { id, raw_input, command_type } = command;
   console.log(`\n⚡ Command received: "${raw_input}"`);
 
+  // Notify Electron parent of new command
+  sendToParent({ id, raw_input, command_type, status: 'processing', created_at: command.created_at || new Date().toISOString() });
+
   // Mark as processing (JARVIS is thinking)
   await supabase.from('commands').update({ 
     status: 'processing', 
@@ -242,6 +245,9 @@ async function processCommand(command) {
 
     await supabase.from('commands').update(updateData).eq('id', id);
 
+    // Notify Electron parent of completion
+    sendToParent({ id, raw_input, status: 'completed', result_stdout: result.text, created_at: command.created_at || new Date().toISOString() });
+
   } catch (err) {
     console.error('❌ JARVIS error:', err.message);
     await supabase.from('commands').update({
@@ -249,6 +255,18 @@ async function processCommand(command) {
       result_stdout: `I ran into an issue: ${err.message}. Could you try rephrasing that?`,
       completed_at: new Date().toISOString(),
     }).eq('id', id);
+
+    // Notify Electron parent of failure
+    sendToParent({ id, raw_input, status: 'failed', result_stderr: err.message, created_at: command.created_at || new Date().toISOString() });
+  }
+}
+
+/**
+ * Send structured data to Electron parent process (if running as child)
+ */
+function sendToParent(cmdData) {
+  if (typeof process.send === 'function') {
+    process.send({ type: 'command', data: cmdData });
   }
 }
 

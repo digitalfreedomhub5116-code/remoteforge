@@ -18,4 +18,7 @@ contextBridge.exposeInMainWorld('remoteforge', {
   onStatus: (callback) => {
     ipcRenderer.on('status', (_, status) => callback(status));
   },
+  onCommand: (callback) => {
+    ipcRenderer.on('command', (_, cmd) => callback(cmd));
+  },
 });

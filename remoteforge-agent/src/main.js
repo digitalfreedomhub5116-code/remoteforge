@@ -29,6 +29,12 @@ let lastLogs = [];
 let currentPairingCode = null;
 const MAX_LOGS = 100;
 
+// Supabase public client credentials (safe to embed — these are anon keys)
+const SUPABASE_DEFAULTS = {
+  url: 'https://ciuncyjzdkvmqusssvcb.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpdW5jeWp6ZGt2bXF1c3NzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMjc3ODQsImV4cCI6MjA5NDcwMzc4NH0.P7m1Y8UVaWPhhIewKD4Xifrylmu1vZvwcPNr_vcS6B0',
+};
+
 // Auto-launch setup
 let AutoLaunch;
 try {
@@ -203,16 +209,31 @@ function startAgent() {
 
   const agentPath = path.join(__dirname, 'agent.js');
 
-  // Load latest env (includes tokens saved after sign-in)
+  // Load latest env from userData/.env (tokens from sign-in)
   const env = loadEnv();
   
-  // Build child env: merge process.env + fresh .env values
-  // Explicitly set tokens to ensure they're never stale
+  // Build child env with ALL required config
+  // In packaged builds, .env is NOT bundled — all config flows from here
   const childEnv = {
     ...process.env,
     ...env,
+    // Supabase — always ensure these are set (use defaults for packaged builds)
+    SUPABASE_URL: process.env.SUPABASE_URL || env.SUPABASE_URL || SUPABASE_DEFAULTS.url,
+    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || SUPABASE_DEFAULTS.anonKey,
+    // Auth tokens — fresh from sign-in
     USER_ACCESS_TOKEN: process.env.USER_ACCESS_TOKEN || env.USER_ACCESS_TOKEN || '',
     USER_REFRESH_TOKEN: process.env.USER_REFRESH_TOKEN || env.USER_REFRESH_TOKEN || '',
+    // Device config
+    DEVICE_NAME: process.env.DEVICE_NAME || env.DEVICE_NAME || require('os').hostname(),
+    COMMAND_TIMEOUT_MS: process.env.COMMAND_TIMEOUT_MS || env.COMMAND_TIMEOUT_MS || '30000',
+    HEARTBEAT_INTERVAL_MS: process.env.HEARTBEAT_INTERVAL_MS || env.HEARTBEAT_INTERVAL_MS || '10000',
+    // AI keys
+    AI_API_KEY: process.env.AI_API_KEY || env.AI_API_KEY || '',
+    AI_PROVIDER: process.env.AI_PROVIDER || env.AI_PROVIDER || '',
+    AI_MODEL: process.env.AI_MODEL || env.AI_MODEL || '',
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY || '',
+    GROQ_API_KEY: process.env.GROQ_API_KEY || env.GROQ_API_KEY || '',
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY || env.GEMINI_API_KEY || '',
   };
 
   agentProcess = fork(agentPath, [], {
@@ -430,16 +451,33 @@ function saveTokensToEnv(accessToken, refreshToken) {
   let content = '';
   try { content = fs.readFileSync(dotenvPath, 'utf-8'); } catch {}
   
-  if (content.includes('USER_ACCESS_TOKEN=')) {
-    content = content.replace(/USER_ACCESS_TOKEN=.*/, `USER_ACCESS_TOKEN=${accessToken}`);
-  } else {
-    content += `\nUSER_ACCESS_TOKEN=${accessToken}`;
+  // Helper to upsert a key=value in the content
+  function upsert(key, value) {
+    if (!value) return;
+    const regex = new RegExp(`^${key}=.*`, 'm');
+    if (regex.test(content)) {
+      content = content.replace(regex, `${key}=${value}`);
+    } else {
+      content += `\n${key}=${value}`;
+    }
   }
-  if (content.includes('USER_REFRESH_TOKEN=')) {
-    content = content.replace(/USER_REFRESH_TOKEN=.*/, `USER_REFRESH_TOKEN=${refreshToken}`);
-  } else {
-    content += `\nUSER_REFRESH_TOKEN=${refreshToken}`;
-  }
+
+  // Auth tokens
+  upsert('USER_ACCESS_TOKEN', accessToken);
+  upsert('USER_REFRESH_TOKEN', refreshToken);
+  
+  // Ensure Supabase config is persisted (critical for packaged builds)
+  upsert('SUPABASE_URL', SUPABASE_DEFAULTS.url);
+  upsert('SUPABASE_ANON_KEY', SUPABASE_DEFAULTS.anonKey);
+  
+  // Persist device name
+  upsert('DEVICE_NAME', process.env.DEVICE_NAME || require('os').hostname());
+  
+  // Persist AI keys if available
+  if (process.env.AI_API_KEY) upsert('AI_API_KEY', process.env.AI_API_KEY);
+  if (process.env.GROQ_API_KEY) upsert('GROQ_API_KEY', process.env.GROQ_API_KEY);
+  
+  fs.mkdirSync(path.dirname(dotenvPath), { recursive: true });
   fs.writeFileSync(dotenvPath, content.trim() + '\n');
 }
 
@@ -487,12 +525,6 @@ function showLoginWindow() {
 // ============================================
 // Supabase Auth from Main Process
 // ============================================
-
-// Public client credentials (same as mobile app — safe to embed)
-const SUPABASE_DEFAULTS = {
-  url: 'https://ciuncyjzdkvmqusssvcb.supabase.co',
-  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpdW5jeWp6ZGt2bXF1c3NzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMjc3ODQsImV4cCI6MjA5NDcwMzc4NH0.P7m1Y8UVaWPhhIewKD4Xifrylmu1vZvwcPNr_vcS6B0',
-};
 
 let supabaseAuth = null;
 

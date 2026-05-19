@@ -29,7 +29,7 @@ function StreamingText({ text, shouldAnimate }: { text: string; shouldAnimate: b
 }
 
 /* ---- Connection Status Label ---- */
-function ConnectionLabel({ status, device }: { status: ConnectionStatus; device: Device }) {
+function ConnectionLabel({ status, device, onRefresh }: { status: ConnectionStatus; device: Device; onRefresh?: () => void }) {
   if (status === 'connected') {
     return (
       <div className="device-status">
@@ -60,7 +60,12 @@ function ConnectionLabel({ status, device }: { status: ConnectionStatus; device:
   return (
     <div className="device-status offline">
       <span className="status-dot error" />
-      <span>Offline{ago ? ` · last seen ${ago}` : ''}</span>
+      <span>Offline{ago ? ` · ${ago}` : ''}</span>
+      {onRefresh && (
+        <button className="reconnect-inline-btn" onClick={onRefresh}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+        </button>
+      )}
     </div>
   );
 }
@@ -126,15 +131,17 @@ interface Props {
   onSelectDevice: (id: string) => void;
   onRetry: (cmd: Command) => void;
   onCancel: (id: string) => void;
+  onRefresh: () => void;
 }
 
 export default function ChatScreen({
   device, devices, commands, streamedIds, chatEnd, connectionStatus,
-  onSend, onConfirm, onMarkStreamed, onSelectDevice, onRetry, onCancel
+  onSend, onConfirm, onMarkStreamed, onSelectDevice, onRetry, onCancel, onRefresh
 }: Props) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'execute' | 'plan'>('execute');
   const [showOfflineWarning, setShowOfflineWarning] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const timedOutIds = useCommandTimeouts(commands);
 
@@ -187,7 +194,7 @@ export default function ChatScreen({
             ) : (
               <span className="device-name">{device.device_name}</span>
             )}
-            <ConnectionLabel status={connectionStatus} device={device} />
+            <ConnectionLabel status={connectionStatus} device={device} onRefresh={onRefresh} />
           </div>
         </div>
         <div className="chat-header-right">
@@ -198,13 +205,27 @@ export default function ChatScreen({
         </div>
       </header>
 
-      {/* Offline Banner */}
+      {/* Offline Banner with Reconnect */}
       {connectionStatus === 'offline' && (
         <div className="offline-banner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <span>PC is offline — waiting for it to come online...</span>
+          <span>PC is offline</span>
+          <button 
+            className={`reconnect-btn ${reconnecting ? 'spinning' : ''}`}
+            onClick={async () => {
+              setReconnecting(true);
+              await onRefresh();
+              setTimeout(() => setReconnecting(false), 2000);
+            }}
+            disabled={reconnecting}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            {reconnecting ? 'Checking...' : 'Reconnect'}
+          </button>
         </div>
       )}
 

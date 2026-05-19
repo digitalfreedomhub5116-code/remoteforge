@@ -942,6 +942,23 @@
   border-bottom: 1px solid rgba(248,113,113,0.1);
   color: #f87171; font-size: 12px; flex-shrink: 0;
 }
+.reconnect-btn {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  border: 1px solid rgba(138,180,248,0.2); background: rgba(138,180,248,0.1);
+  color: #8ab4f8; cursor: pointer; font-family: inherit; transition: all 0.2s;
+}
+.reconnect-btn:hover { background: rgba(138,180,248,0.18); }
+.reconnect-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.reconnect-btn.spinning svg { animation: spin 0.7s linear infinite; }
+.reconnect-inline-btn {
+  margin-left: 4px; background: none; border: none; color: #8ab4f8;
+  cursor: pointer; padding: 2px; display: inline-flex; align-items: center;
+  border-radius: 4px; transition: all 0.15s;
+}
+.reconnect-inline-btn:hover { background: rgba(138,180,248,0.15); }
+.reconnect-inline-btn svg { animation: none; }
+.reconnect-inline-btn:active svg { animation: spin 0.5s linear; }
 
 /* ============================================ */
 /*  Timeout & Retry                             */

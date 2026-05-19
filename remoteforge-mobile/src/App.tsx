@@ -311,6 +311,7 @@ export default function App() {
             onSelectDevice={setSelectedDevice}
             onRetry={retryCommand}
             onCancel={cancelCommand}
+            onRefresh={loadDevices}
           />
         )}
         {screen === 'history' && (

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RemoteForge Agent</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #131314;
+      color: #e3e3e3;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* Header */
+    .header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid #2a2a30;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #e3e3e3;
+      letter-spacing: -0.3px;
+    }
+    .header .subtitle {
+      font-size: 12px;
+      color: #8e8e9a;
+      margin-top: 4px;
+    }
+
+    /* Status bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      background: #1e1f20;
+      border-bottom: 1px solid #2a2a30;
+      flex-shrink: 0;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #6b7280;
+      transition: background 0.3s;
+    }
+    .status-dot.running { background: #10b981; box-shadow: 0 0 8px #10b98166; }
+    .status-dot.starting { background: #f59e0b; box-shadow: 0 0 8px #f59e0b66; animation: pulse 1.5s ease-in-out infinite; }
+    .status-dot.error { background: #ef4444; box-shadow: 0 0 8px #ef444466; }
+    .status-dot.stopped { background: #6b7280; }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .status-text {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 8px;
+    }
+    .btn {
+      padding: 6px 14px;
+      border: 1px solid #3a3a44;
+      border-radius: 6px;
+      background: #1e1f20;
+      color: #c4c7c5;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+    .btn:hover {
+      background: #2a2a30;
+      border-color: #4a4a54;
+    }
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn.primary {
+      background: #1a73e8;
+      border-color: #1a73e8;
+      color: white;
+    }
+    .btn.primary:hover {
+      background: #1765cc;
+    }
+    .btn.danger {
+      border-color: #ef444466;
+      color: #f87171;
+    }
+    .btn.danger:hover {
+      background: #ef444420;
+    }
+
+    /* Settings */
+    .settings {
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid #2a2a30;
+      flex-shrink: 0;
+    }
+    .toggle-label {
+      font-size: 12px;
+      color: #8e8e9a;
+    }
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      background: #3a3a44;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle.active { background: #1a73e8; }
+    .toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle.active::after { transform: translateX(16px); }
+
+    /* Log area */
+    .log-header {
+      padding: 10px 24px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #8e8e9a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    .logs {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 24px 16px;
+      font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.7;
+      color: #a0a0ae;
+    }
+    .logs::-webkit-scrollbar { width: 6px; }
+    .logs::-webkit-scrollbar-track { background: transparent; }
+    .logs::-webkit-scrollbar-thumb { background: #3a3a44; border-radius: 3px; }
+
+    .log-line {
+      padding: 1px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-line.error { color: #f87171; }
+    .log-line.success { color: #34d399; }
+    .log-line.info { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>RemoteForge Agent</h1>
+    <div class="subtitle">JARVIS v3.0 — Desktop Controller</div>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-indicator">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">Stopped</span>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="startBtn" onclick="startAgent()">Start</button>
+      <button class="btn" id="restartBtn" onclick="restartAgent()" disabled>Restart</button>
+      <button class="btn danger" id="stopBtn" onclick="stopAgent()" disabled>Stop</button>
+    </div>
+  </div>
+
+  <div class="settings">
+    <div class="toggle" id="autoLaunchToggle" onclick="toggleAutoLaunch()"></div>
+    <span class="toggle-label">Start on Windows boot</span>
+  </div>
+
+  <div class="log-header">Live Logs</div>
+  <div class="logs" id="logs"></div>
+
+  <script>
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const logsEl = document.getElementById('logs');
+    const autoLaunchToggle = document.getElementById('autoLaunchToggle');
+
+    const statusLabels = {
+      stopped: 'Agent Stopped',
+      starting: 'Starting...',
+      running: 'Agent Running',
+      error: 'Error',
+    };
+
+    function updateStatus(status) {
+      statusDot.className = 'status-dot ' + status;
+      statusText.textContent = statusLabels[status] || status;
+      
+      startBtn.disabled = status === 'running' || status === 'starting';
+      stopBtn.disabled = status === 'stopped';
+      restartBtn.disabled = status !== 'running';
+    }
+
+    function addLogLine(text) {
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      if (text.includes('[ERR]') || text.includes('error') || text.includes('❌')) div.className += ' error';
+      else if (text.includes('✅') || text.includes('LIVE') || text.includes('running')) div.className += ' success';
+      else if (text.includes('🧠') || text.includes('👁️') || text.includes('🔧')) div.className += ' info';
+      div.textContent = text;
+      logsEl.appendChild(div);
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    async function startAgent() {
+      await window.remoteforge.startAgent();
+    }
+
+    async function stopAgent() {
+      await window.remoteforge.stopAgent();
+    }
+
+    async function restartAgent() {
+      await window.remoteforge.restartAgent();
+    }
+
+    async function toggleAutoLaunch() {
+      const isEnabled = autoLaunchToggle.classList.contains('active');
+      const newState = !isEnabled;
+      await window.remoteforge.setAutoLaunch(newState);
+      autoLaunchToggle.classList.toggle('active', newState);
+    }
+
+    // Listen for live updates
+    window.remoteforge.onLog((log) => addLogLine(log));
+    window.remoteforge.onStatus((status) => updateStatus(status));
+
+    // Load initial state
+    (async () => {
+      const status = await window.remoteforge.getStatus();
+      updateStatus(status);
+      
+      const logs = await window.remoteforge.getLogs();
+      for (const log of logs) addLogLine(log);
+
+      const autoLaunch = await window.remoteforge.getAutoLaunch();
+      autoLaunchToggle.classList.toggle('active', autoLaunch);
+    })();
+  </script>
+</body>
+</html>

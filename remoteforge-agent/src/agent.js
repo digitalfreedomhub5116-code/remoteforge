@@ -8,7 +8,8 @@
  * 4. Sends results back
  */
 
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { createClient } = require('@supabase/supabase-js');
 const os = require('os');
 const {

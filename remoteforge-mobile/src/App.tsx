@@ -79,7 +79,25 @@ export default function App() {
   } : null;
 
   /* ---- Devices ---- */
-  useEffect(() => { if (session) loadDevices(); }, [session]);
+  useEffect(() => {
+    if (!session) return;
+    loadDevices();
+
+    // Subscribe to device status changes in real-time
+    const deviceCh = supabase
+      .channel('device-status')
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'devices',
+      }, (p) => {
+        setDevices(prev => prev.map(d => d.id === p.new.id
+          ? { ...d, is_online: p.new.is_online } as Device
+          : d
+        ));
+      }).subscribe();
+
+    return () => { supabase.removeChannel(deviceCh); };
+  }, [session]);
+
   async function loadDevices() {
     const { data } = await supabase
       .from('devices')
@@ -96,6 +114,8 @@ export default function App() {
   useEffect(() => {
     if (!selectedDevice) return;
     loadCommands();
+
+    // Realtime subscription for instant updates
     const ch = supabase
       .channel(`cmds-${selectedDevice}`)
       .on('postgres_changes', {
@@ -104,8 +124,44 @@ export default function App() {
       }, (p) => {
         if (p.eventType === 'INSERT') setCommands(prev => [...prev, p.new as Command]);
         else if (p.eventType === 'UPDATE') setCommands(prev => prev.map(c => c.id === p.new.id ? p.new as Command : c));
-      }).subscribe();
-    return () => { supabase.removeChannel(ch); };
+      }).subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('Realtime channel issue, falling back to polling');
+        }
+      });
+
+    // Polling fallback: re-fetch commands every 5s to catch any missed Realtime events
+    // This ensures "pending" messages eventually get their replies even if Realtime drops
+    const pollTimer = setInterval(async () => {
+      const { data } = await supabase
+        .from('commands')
+        .select('*')
+        .eq('pc_device_id', selectedDevice)
+        .order('created_at', { ascending: true })
+        .limit(50);
+      if (data) {
+        setCommands(prev => {
+          // Merge: update existing, add new
+          const map = new Map(prev.map(c => [c.id, c]));
+          let changed = false;
+          for (const cmd of data) {
+            const existing = map.get(cmd.id);
+            if (!existing || existing.status !== cmd.status || existing.result_stdout !== cmd.result_stdout) {
+              map.set(cmd.id, cmd);
+              changed = true;
+            }
+          }
+          return changed ? Array.from(map.values()).sort((a, b) =>
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          ) : prev;
+        });
+      }
+    }, 5000);
+
+    return () => {
+      supabase.removeChannel(ch);
+      clearInterval(pollTimer);
+    };
   }, [selectedDevice]);
 
   async function loadCommands() {

@@ -44,6 +44,10 @@ let supabase;
 let deviceId = null;
 let userId = null;
 let heartbeatTimer = null;
+let realtimeChannel = null;
+let healthCheckTimer = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000;
 
 /**
  * Initialize Supabase with user session
@@ -53,6 +57,11 @@ function initSupabase(accessToken, refreshToken) {
     auth: {
       autoRefreshToken: true,
       persistSession: false,
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10,
+      },
     },
   });
 
@@ -272,8 +281,19 @@ function sendToParent(cmdData) {
 
 /**
  * Subscribe to new commands via Supabase Realtime
+ * Includes robust reconnection and health monitoring
  */
 function subscribeToCommands() {
+  // Clean up previous channel if exists
+  if (realtimeChannel) {
+    try {
+      supabase.removeChannel(realtimeChannel);
+    } catch (e) {
+      console.log('   ⚠️ Error removing old channel:', e.message);
+    }
+    realtimeChannel = null;
+  }
+
   const channel = supabase
     .channel('commands-listener')
     .on(
@@ -313,15 +333,122 @@ function subscribeToCommands() {
         }
       }
     )
-    .subscribe((status) => {
+    .subscribe((status, err) => {
       if (status === 'SUBSCRIBED') {
         console.log('📡 Listening for commands via Realtime...');
+        reconnectAttempts = 0; // Reset on successful subscription
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error(`📡 Realtime ${status}${err ? ': ' + err.message : ''} — will reconnect...`);
+        scheduleReconnect();
+      } else if (status === 'CLOSED') {
+        console.log('📡 Realtime channel closed — reconnecting...');
+        scheduleReconnect();
       } else {
         console.log(`📡 Realtime status: ${status}`);
       }
     });
 
+  realtimeChannel = channel;
+
+  // Start health monitoring
+  startChannelHealthCheck();
+
   return channel;
+}
+
+/**
+ * Schedule a reconnection with exponential backoff
+ */
+function scheduleReconnect() {
+  reconnectAttempts++;
+  const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), MAX_RECONNECT_DELAY);
+  console.log(`   🔄 Reconnecting in ${(delay / 1000).toFixed(1)}s (attempt #${reconnectAttempts})...`);
+
+  setTimeout(async () => {
+    try {
+      // Refresh the auth session first
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) {
+        console.error('   ❌ Session refresh failed:', error.message);
+        // Try reloading tokens from .env in case main process updated them
+        const fs = require('fs');
+        const envPath = path.join(__dirname, '..', '.env');
+        try {
+          const envContent = fs.readFileSync(envPath, 'utf-8');
+          const tokenMatch = envContent.match(/USER_ACCESS_TOKEN=(.+)/);
+          const refreshMatch = envContent.match(/USER_REFRESH_TOKEN=(.+)/);
+          if (tokenMatch && refreshMatch) {
+            await supabase.auth.setSession({
+              access_token: tokenMatch[1].trim(),
+              refresh_token: refreshMatch[1].trim(),
+            });
+            console.log('   🔑 Reloaded tokens from .env');
+          }
+        } catch (e) {
+          console.error('   ❌ Could not reload tokens:', e.message);
+        }
+      } else if (data.session) {
+        console.log('   🔑 Session refreshed successfully');
+        // Save refreshed tokens to .env
+        const fs = require('fs');
+        const envPath = path.join(__dirname, '..', '.env');
+        try {
+          let envContent = fs.readFileSync(envPath, 'utf-8');
+          envContent = envContent.replace(/USER_ACCESS_TOKEN=.*/, `USER_ACCESS_TOKEN=${data.session.access_token}`);
+          envContent = envContent.replace(/USER_REFRESH_TOKEN=.*/, `USER_REFRESH_TOKEN=${data.session.refresh_token}`);
+          fs.writeFileSync(envPath, envContent);
+        } catch (e) {
+          // Non-critical
+        }
+      }
+
+      // Re-subscribe
+      subscribeToCommands();
+
+      // Process any pending commands that arrived while disconnected
+      await processPendingCommands();
+
+    } catch (err) {
+      console.error('   ❌ Reconnection failed:', err.message);
+      scheduleReconnect(); // Try again
+    }
+  }, delay);
+}
+
+/**
+ * Periodically check channel health and process missed pending commands
+ */
+function startChannelHealthCheck() {
+  if (healthCheckTimer) clearInterval(healthCheckTimer);
+
+  healthCheckTimer = setInterval(async () => {
+    // Check if channel is still active
+    if (!realtimeChannel || realtimeChannel.state !== 'joined') {
+      console.log('📡 Health check: channel not joined — reconnecting...');
+      scheduleReconnect();
+      return;
+    }
+
+    // Also sweep for any pending commands that might have been missed
+    // (e.g., during a brief disconnect that wasn't caught)
+    try {
+      const { data: pending } = await supabase
+        .from('commands')
+        .select('*')
+        .eq('pc_device_id', deviceId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+
+      if (pending && pending.length > 0) {
+        console.log(`📋 Health check found ${pending.length} pending command(s) — processing...`);
+        for (const cmd of pending) {
+          await processCommand(cmd);
+        }
+      }
+    } catch (e) {
+      console.error('📋 Health check query failed:', e.message);
+    }
+  }, 30000); // Every 30 seconds
 }
 
 /**
@@ -350,6 +477,11 @@ async function shutdown() {
   console.log('\n🛑 Shutting down RemoteForge Agent...');
 
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (healthCheckTimer) clearInterval(healthCheckTimer);
+
+  if (realtimeChannel) {
+    try { supabase.removeChannel(realtimeChannel); } catch (e) {}
+  }
 
   if (deviceId && supabase) {
     await supabase
@@ -409,17 +541,31 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 4: Listen for token refreshes and save them
-  supabase.auth.onAuthStateChange((event, session) => {
+  // Step 4: Listen for token refreshes and save them + reconnect Realtime
+  supabase.auth.onAuthStateChange(async (event, session) => {
     if (event === 'TOKEN_REFRESHED' && session) {
       const fs = require('fs');
-      const path = require('path');
       const envPath = path.join(__dirname, '..', '.env');
-      let envContent = fs.readFileSync(envPath, 'utf-8');
-      envContent = envContent.replace(/USER_ACCESS_TOKEN=.*/, `USER_ACCESS_TOKEN=${session.access_token}`);
-      envContent = envContent.replace(/USER_REFRESH_TOKEN=.*/, `USER_REFRESH_TOKEN=${session.refresh_token}`);
-      fs.writeFileSync(envPath, envContent);
+      try {
+        let envContent = fs.readFileSync(envPath, 'utf-8');
+        envContent = envContent.replace(/USER_ACCESS_TOKEN=.*/, `USER_ACCESS_TOKEN=${session.access_token}`);
+        envContent = envContent.replace(/USER_REFRESH_TOKEN=.*/, `USER_REFRESH_TOKEN=${session.refresh_token}`);
+        fs.writeFileSync(envPath, envContent);
+      } catch (e) {
+        console.error('⚠️ Could not save refreshed tokens:', e.message);
+      }
       console.log('🔄 Auth tokens refreshed and saved');
+
+      // Re-subscribe to Realtime with the new token
+      // The Supabase client should handle this, but force it to be safe
+      if (realtimeChannel && realtimeChannel.state !== 'joined') {
+        console.log('🔄 Reconnecting Realtime after token refresh...');
+        subscribeToCommands();
+        await processPendingCommands();
+      }
+    } else if (event === 'SIGNED_OUT') {
+      console.error('❌ Auth session ended — agent stopping.');
+      await shutdown();
     }
   });
 

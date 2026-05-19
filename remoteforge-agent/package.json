@@ -25,14 +25,7 @@
       "src/**/*",
       "ui/**/*",
       "assets/**/*",
-      "node_modules/**/*",
-      ".env"
-    ],
-    "extraResources": [
-      {
-        "from": ".env",
-        "to": ".env"
-      }
+      "node_modules/**/*"
     ]
   },
   "keywords": [

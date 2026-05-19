@@ -12,6 +12,9 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, shell } = require(
 const path = require('path');
 const { fork } = require('child_process');
 
+// Remove default menu bar from all windows
+Menu.setApplicationMenu(null);
+
 // Prevent multiple instances
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -473,53 +476,92 @@ ipcMain.handle('sign-in-google', async () => {
   const url = env.SUPABASE_URL || process.env.SUPABASE_URL;
   if (!url) return { error: 'Supabase not configured' };
 
-  // Open Google OAuth in system browser
-  // The user signs in on the browser, gets redirected to the web app
-  // Then they need to copy the token or we use a localhost callback
+  // Start a local server FIRST to handle the OAuth callback
+  const http = require('http');
+  let server;
+
+  try {
+    server = http.createServer(async (req, res) => {
+      // Supabase redirects to /auth/callback#access_token=...&refresh_token=...
+      // The # hash fragment never reaches the server, so we serve an HTML page
+      // that reads the hash client-side and sends tokens via /auth/token endpoint
+
+      if (req.url && req.url.startsWith('/auth/callback')) {
+        // Serve the token-extraction page
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`<!DOCTYPE html>
+          <html><head><style>*{margin:0}body{background:#0a0a0b;color:#8ab4f8;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh}</style></head>
+          <body><div style="text-align:center" id="msg"><div style="width:32px;height:32px;border:3px solid rgba(138,180,248,0.15);border-top-color:#8ab4f8;border-radius:50%;animation:s .7s linear infinite;margin:0 auto 16px"></div><p>Signing you in...</p></div>
+          <style>@keyframes s{to{transform:rotate(360deg)}}</style>
+          <script>
+            // Extract tokens from URL hash fragment
+            const hash = window.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
+            const accessToken = params.get('access_token');
+            const refreshToken = params.get('refresh_token');
+            if (accessToken && refreshToken) {
+              fetch('/auth/token?access_token=' + accessToken + '&refresh_token=' + refreshToken)
+                .then(() => { document.getElementById('msg').innerHTML = '<h2>✅ Signed in!</h2><p style="color:#7a7a85;margin-top:8px">You can close this tab.</p>'; })
+                .catch(() => { document.getElementById('msg').innerHTML = '<h2 style="color:#f87171">Error saving token</h2>'; });
+            } else {
+              document.getElementById('msg').innerHTML = '<h2 style="color:#f87171">Sign-in failed</h2><p style="color:#7a7a85;margin-top:8px">Close this tab and try again.</p>';
+            }
+          </script></body></html>`);
+        return;
+      }
+
+      if (req.url && req.url.startsWith('/auth/token')) {
+        // Receive the tokens forwarded from the client-side JS
+        const urlObj = new URL(`http://localhost${req.url}`);
+        const accessToken = urlObj.searchParams.get('access_token');
+        const refreshToken = urlObj.searchParams.get('refresh_token');
+
+        if (accessToken && refreshToken) {
+          saveTokensToEnv(accessToken, refreshToken);
+          process.env.USER_ACCESS_TOKEN = accessToken;
+          process.env.USER_REFRESH_TOKEN = refreshToken;
+
+          addLog('✅ Signed in via Google OAuth');
+          if (loginWindow && !loginWindow.isDestroyed()) {
+            loginWindow.close();
+            loginWindow = null;
+          }
+          showStatusWindow();
+          startAgent();
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"ok":true}');
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"missing tokens"}');
+        }
+        // Close server after a short delay
+        setTimeout(() => { try { server.close(); } catch {} }, 2000);
+        return;
+      }
+
+      res.writeHead(404);
+      res.end('Not found');
+    });
+
+    await new Promise((resolve, reject) => {
+      server.listen(54321, () => {
+        console.log('OAuth callback server listening on :54321');
+        resolve();
+      });
+      server.on('error', reject);
+    });
+  } catch (err) {
+    console.error('Failed to start OAuth server:', err.message);
+    return { error: 'Could not start auth server. Port 54321 may be in use.' };
+  }
+
+  // Now open the browser with the OAuth URL
   const oauthUrl = `${url}/auth/v1/authorize?provider=google&redirect_to=http://localhost:54321/auth/callback`;
   shell.openExternal(oauthUrl);
 
-  // Start a temporary local server to capture the callback
-  const http = require('http');
-  const server = http.createServer(async (req, res) => {
-    if (req.url && req.url.includes('/auth/callback')) {
-      const urlObj = new URL(`http://localhost${req.url}`);
-      const accessToken = urlObj.searchParams.get('access_token') || urlObj.hash?.split('access_token=')[1]?.split('&')[0];
-      const refreshToken = urlObj.searchParams.get('refresh_token') || urlObj.hash?.split('refresh_token=')[1]?.split('&')[0];
-
-      if (accessToken && refreshToken) {
-        saveTokensToEnv(accessToken, refreshToken);
-        process.env.USER_ACCESS_TOKEN = accessToken;
-        process.env.USER_REFRESH_TOKEN = refreshToken;
-        
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(`
-          <html><body style="background:#0a0a0b;color:#8ab4f8;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-            <div style="text-align:center"><h2>✅ Signed in!</h2><p style="color:#7a7a85">You can close this tab and return to RemoteForge.</p></div>
-          </body></html>
-        `);
-
-        addLog('✅ Signed in via Google OAuth');
-        if (loginWindow && !loginWindow.isDestroyed()) {
-          loginWindow.close();
-          loginWindow = null;
-        }
-        showStatusWindow();
-        startAgent();
-      } else {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body style="background:#0a0a0b;color:#f87171;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh"><h2>Auth failed — try again</h2></body></html>');
-      }
-      server.close();
-    }
-  });
-
-  server.listen(54321, () => {
-    console.log('OAuth callback server listening on :54321');
-  });
-  
-  // Auto-close after 2 minutes if no callback
-  setTimeout(() => { try { server.close(); } catch {} }, 120000);
+  // Auto-close server after 3 minutes if no callback
+  setTimeout(() => { try { server.close(); } catch {} }, 180000);
 
   return { success: true };
 });

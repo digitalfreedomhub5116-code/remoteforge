@@ -637,6 +637,21 @@ ipcMain.handle('set-auto-launch', async (_, enabled) => {
   else await autoLauncher.disable();
 });
 ipcMain.handle('get-pairing-code', () => currentPairingCode);
+ipcMain.handle('sign-out', async () => {
+  stopAgent();
+  // Clear tokens
+  saveTokensToEnv('', '');
+  process.env.USER_ACCESS_TOKEN = '';
+  process.env.USER_REFRESH_TOKEN = '';
+  currentPairingCode = null;
+  addLog('🔒 Signed out');
+  // Close status window and show login
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+    mainWindow = null;
+  }
+  showLoginWindow();
+});
 
 // ============================================
 // App Lifecycle

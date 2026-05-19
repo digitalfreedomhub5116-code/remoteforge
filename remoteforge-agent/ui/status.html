@@ -286,6 +286,7 @@
   <div class="bottom-bar">
     <div class="bottom-left">
       <span class="brain-label">Brain: <strong>Nemotron 120B</strong></span>
+      <button class="btn danger" onclick="signOut()" style="margin-left: 8px; font-size: 11px; padding: 4px 10px;">Logout</button>
     </div>
     <div class="bottom-right">
       <button class="btn primary" id="startBtn" onclick="startAgent()">Start</button>
@@ -408,6 +409,7 @@
     async function startAgent() { await window.remoteforge.startAgent(); }
     async function stopAgent() { await window.remoteforge.stopAgent(); }
     async function restartAgent() { await window.remoteforge.restartAgent(); }
+    async function signOut() { await window.remoteforge.signOut(); }
 
     // ---- Live updates from main process ----
     window.remoteforge.onLog((log) => addLog(log));

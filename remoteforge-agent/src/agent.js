@@ -357,10 +357,14 @@ async function main() {
   console.log('╚══════════════════════════════════════╝');
   console.log('');
 
-  // Initialize JARVIS brain
-  const aiReady = initAI(process.env.GEMINI_API_KEY);
+  // Initialize JARVIS brain (supports OpenRouter, Groq, DeepSeek, Gemini)
+  const aiReady = initAI({
+    apiKey: process.env.AI_API_KEY || process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY,
+    provider: process.env.AI_PROVIDER, // auto-detected from key if not set
+    model: process.env.AI_MODEL,       // uses provider default if not set
+  });
   if (!aiReady) {
-    console.log('   ⚠️ JARVIS brain offline — add GEMINI_API_KEY to .env');
+    console.log('   ⚠️ JARVIS brain offline — add AI_API_KEY to .env');
   }
 
   // Step 1: Initialize Supabase

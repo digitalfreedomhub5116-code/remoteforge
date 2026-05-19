@@ -1,111 +1,132 @@
 /**
  * RemoteForge — JARVIS AI Brain
  * 
- * Uses Gemini 2.5 Flash with Function Calling (tool use)
- * to create a true conversational PC control agent.
+ * Multi-provider AI backend using OpenAI-compatible APIs.
+ * Supports: OpenRouter, Groq, DeepSeek, or any OpenAI-compatible endpoint.
  * 
- * The AI decides when to run commands, interprets results,
- * retries on failure, and responds in natural language.
+ * Uses function calling (tool use) for PC control.
+ * No external AI SDK needed — uses native fetch.
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const path = require('path');
 
-// ---- Tool Definitions (what JARVIS can do) ----
+// ---- Tool Definitions (OpenAI format) ----
 const TOOLS = [
   {
-    functionDeclarations: [
-      {
-        name: 'run_powershell',
-        description: 'Execute a PowerShell command on the Windows PC. Use this for any system operation: file management, network info, process control, installations, etc.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            command: { type: 'STRING', description: 'The PowerShell command to execute' },
+    type: 'function',
+    function: {
+      name: 'run_powershell',
+      description: 'Execute a PowerShell command on the Windows PC. Use for file ops, network, processes, installs, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The PowerShell command to execute' },
+        },
+        required: ['command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_application',
+      description: 'Open/launch an application by name. Examples: chrome, notepad, vscode, discord, spotify, calculator',
+      parameters: {
+        type: 'object',
+        properties: {
+          app_name: { type: 'string', description: 'Name of the app to open' },
+        },
+        required: ['app_name'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'take_screenshot',
+      description: 'Capture a screenshot of the current screen. Use to SEE what is on screen. Call AFTER UI actions to verify.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_system_info',
+      description: 'Get system info: CPU, RAM, disk, battery, OS version.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'type_text',
+      description: 'Type text into the currently focused window. ALWAYS use focus_window FIRST. After typing, use take_screenshot to verify.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'The text to type (just the content, NOT the app name)' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'press_keys',
+      description: 'Press keyboard shortcut. Examples: ["control","s"] for save, ["enter"] to submit, ["alt","tab"] to switch.',
+      parameters: {
+        type: 'object',
+        properties: {
+          keys: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Keys to press simultaneously. E.g. ["control","s"], ["alt","tab"], ["enter"]',
           },
-          required: ['command'],
         },
+        required: ['keys'],
       },
-      {
-        name: 'open_application',
-        description: 'Open/launch an application by name. Examples: chrome, notepad, vscode, discord, spotify, calculator, explorer, edge',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            app_name: { type: 'STRING', description: 'Name of the app to open' },
-          },
-          required: ['app_name'],
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'focus_window',
+      description: 'Bring a window to foreground by title. Use BEFORE type_text or click_at.',
+      parameters: {
+        type: 'object',
+        properties: {
+          window_title: { type: 'string', description: 'Title or partial title of window. E.g. "Notepad", "Chrome", "Antigravity"' },
         },
+        required: ['window_title'],
       },
-      {
-        name: 'take_screenshot',
-        description: 'Capture a screenshot of the current screen. Use this to SEE what is on the screen right now. Call this AFTER performing UI actions (clicking, typing, focusing) to verify the result.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {},
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'click_at',
+      description: 'Click mouse at screen coordinates (x, y). Use take_screenshot first to see where to click.',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'string', description: 'X coordinate (pixels from left)' },
+          y: { type: 'string', description: 'Y coordinate (pixels from top)' },
+          button: { type: 'string', description: 'Mouse button: "left" (default), "right", "double"' },
         },
+        required: ['x', 'y'],
       },
-      {
-        name: 'get_system_info',
-        description: 'Get detailed system information: CPU usage, RAM, disk space, battery level, OS version.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {},
-        },
-      },
-      {
-        name: 'type_text',
-        description: 'Type text using the keyboard into the currently focused window. ALWAYS use focus_window FIRST to target the correct app. After typing, use take_screenshot to verify the text appeared correctly.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            text: { type: 'STRING', description: 'The text to type (NOT the app name, just the content)' },
-          },
-          required: ['text'],
-        },
-      },
-      {
-        name: 'press_keys',
-        description: 'Press a keyboard shortcut or key combination. Examples: ["control","s"] for save, ["enter"] to submit, ["control","l"] to focus address bar, ["alt","tab"] to switch windows.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            keys: {
-              type: 'ARRAY',
-              items: { type: 'STRING' },
-              description: 'Array of keys to press simultaneously. Examples: ["control","s"], ["alt","tab"], ["enter"]',
-            },
-          },
-          required: ['keys'],
-        },
-      },
-      {
-        name: 'focus_window',
-        description: 'Bring a specific application window to the foreground by its title. Use this BEFORE type_text or click_at to ensure you are interacting with the right window.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            window_title: { type: 'STRING', description: 'The title or partial title of the window to focus. Examples: "Notepad", "Chrome", "Antigravity", "Visual Studio Code"' },
-          },
-          required: ['window_title'],
-        },
-      },
-      {
-        name: 'click_at',
-        description: 'Click the mouse at specific screen coordinates (x, y). Use take_screenshot first to see the screen and identify where to click. Coordinates are in pixels from the top-left corner.',
-        parameters: {
-          type: 'OBJECT',
-          properties: {
-            x: { type: 'STRING', description: 'X coordinate (pixels from left edge)' },
-            y: { type: 'STRING', description: 'Y coordinate (pixels from top edge)' },
-            button: { type: 'STRING', description: 'Mouse button: "left" (default), "right", or "double"' },
-          },
-          required: ['x', 'y'],
-        },
-      },
-    ],
+    },
   },
 ];
 
+// ---- JARVIS System Prompt ----
 const SYSTEM_PROMPT = `You are JARVIS — the user's remote operator. You sit at their Windows PC and operate it exactly like a human would. You have eyes (screenshots), hands (keyboard + mouse), and a brain (you). The user commands you from their phone while away from the PC.
 
 YOU ARE NOT A CHATBOT. You are a human-like agent who:
@@ -162,45 +183,6 @@ Skip Phase 1 ONLY for these simple/obvious tasks:
 For EVERYTHING that requires action, always do Phase 2 (plan + confirm).
 
 ═══════════════════════════════════════════════
-EXAMPLES OF THE WORKFLOW
-═══════════════════════════════════════════════
-
-USER: "Open WhatsApp web and message Utkarsha I will be late"
-JARVIS (Phase 1): "I see Antigravity IDE is open on your screen. Before I start:
-- Which Chrome profile should I use? (you may have multiple)
-- Should I send the message directly or let you review it first?"
-
-USER: "Default profile. Send it directly"
-JARVIS (Phase 2): "Got it. Here's my plan:
-1. Open Chrome (default profile)
-2. Navigate to web.whatsapp.com
-3. Wait for it to load and sync
-4. Search for Utkarsha's chat
-5. Type: 'I will be late'
-6. Click send
-
-Ready to execute?"
-
-USER: "Go"
-JARVIS (Phase 3): *executes step by step with screenshots*
-
----
-
-USER: "Tell antigravity to build a todo app"
-JARVIS (Phase 1 — skip, task is clear)
-JARVIS (Phase 2): "I see Antigravity is open. Here's my plan:
-1. Focus the Antigravity window
-2. Click on the chat input
-3. Type: 'Build a todo app with add, delete, and mark complete functionality'
-4. Press Enter to submit
-5. Monitor the code generation
-
-Ready to go?"
-
-USER: "Yes"
-JARVIS (Phase 3): *focuses, clicks, types, sends, takes screenshots*
-
-═══════════════════════════════════════════════
 HOW TO INTERACT WITH APPS
 ═══════════════════════════════════════════════
 
@@ -227,173 +209,234 @@ RESPONSE FORMAT:
 - Always end Phase 2 with a clear "Ready to execute?" or similar`;
 
 
-let model = null;
-const conversationHistories = new Map(); // deviceId -> chat history
+// ---- Provider Configuration ----
+let apiKey = null;
+let apiBase = null;
+let modelId = null;
+let providerName = null;
+const conversationHistories = new Map(); // deviceId -> messages[]
 
 /**
- * Initialize the Gemini AI client
+ * Initialize the AI client
+ * Supports multiple providers via OpenAI-compatible API format
  */
-function initAI(apiKey) {
-  if (!apiKey) {
-    console.log('⚠️  No GEMINI_API_KEY found — JARVIS brain disabled.');
+function initAI(config) {
+  // Support legacy single key format
+  if (typeof config === 'string') {
+    config = { apiKey: config };
+  }
+
+  if (!config || !config.apiKey) {
+    console.log('⚠️  No AI API key found — JARVIS brain disabled.');
     return false;
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  model = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    tools: TOOLS,
-    systemInstruction: SYSTEM_PROMPT,
-    generationConfig: {
-      temperature: 0.4,
-      maxOutputTokens: 4096,
-    },
+  apiKey = config.apiKey;
+
+  // Fallback models to try if primary is rate-limited (OpenRouter only)
+  const FALLBACK_MODELS = [
+    'nvidia/nemotron-3-super-120b-a12b:free',
+    'deepseek/deepseek-v4-flash:free',
+    'google/gemma-4-31b-it:free',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'qwen/qwen3-coder:free',
+  ];
+
+  // Auto-detect provider from key prefix or explicit config
+  if (config.provider === 'groq' || apiKey.startsWith('gsk_')) {
+    apiBase = 'https://api.groq.com/openai/v1';
+    modelId = config.model || 'llama-3.3-70b-versatile';
+    providerName = 'Groq';
+  } else if (config.provider === 'openrouter' || apiKey.startsWith('sk-or-')) {
+    apiBase = 'https://openrouter.ai/api/v1';
+    modelId = config.model || FALLBACK_MODELS[0];
+    providerName = 'OpenRouter';
+  } else if (config.provider === 'deepseek' || apiKey.startsWith('sk-ds')) {
+    apiBase = 'https://api.deepseek.com/v1';
+    modelId = config.model || 'deepseek-chat';
+    providerName = 'DeepSeek';
+  } else {
+    apiBase = config.apiBase || 'https://openrouter.ai/api/v1';
+    modelId = config.model || FALLBACK_MODELS[0];
+    providerName = config.provider || 'OpenRouter';
+  }
+
+  console.log(`🧠 JARVIS brain initialized (${providerName} → ${modelId})`);
+  if (providerName === 'OpenRouter') {
+    console.log(`   📋 Fallback models: ${FALLBACK_MODELS.slice(1).join(', ')}`);
+  }
+  return true;
+}
+
+/**
+ * Make a chat completion request to the provider
+ */
+async function chatCompletion(messages, tools = null) {
+  const body = {
+    model: modelId,
+    messages,
+    temperature: 0.4,
+    max_tokens: 4096,
+  };
+
+  if (tools && tools.length > 0) {
+    body.tools = tools;
+    body.tool_choice = 'auto';
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+  };
+
+  // OpenRouter-specific headers
+  if (providerName === 'OpenRouter') {
+    headers['HTTP-Referer'] = 'https://remoteforge.app';
+    headers['X-Title'] = 'RemoteForge JARVIS';
+  }
+
+  const response = await fetch(`${apiBase}/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
   });
 
-  console.log('🧠 JARVIS brain initialized (Gemini 2.5 Flash + Function Calling)');
-  return true;
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`${response.status} ${response.statusText}: ${errText}`);
+  }
+
+  return await response.json();
 }
 
 /**
  * Process a user message through JARVIS
  * Returns: { text: string, screenshot_base64?: string }
- * 
- * This handles the full conversation loop:
- * User message → AI thinks → AI calls tools → Agent executes → 
- * Results fed back to AI → AI responds naturally
  */
 async function processWithJarvis(userMessage, deviceId, toolExecutor) {
-  if (!model) {
-    return { text: "I'm currently running in basic mode. Please add a Gemini API key to enable full JARVIS capabilities." };
+  if (!apiKey) {
+    return { text: "I'm currently running in basic mode. Please add an API key to enable full JARVIS capabilities." };
   }
 
-  // Get or create conversation history for this device
+  // Get or create conversation history
   if (!conversationHistories.has(deviceId)) {
     conversationHistories.set(deviceId, []);
   }
   const history = conversationHistories.get(deviceId);
 
-  // Keep last 20 messages for context (prevent token overflow)
+  // Keep last 20 messages for context
   if (history.length > 40) {
     history.splice(0, history.length - 20);
   }
 
   try {
     // ---- VISION: Auto-capture screen before processing ----
-    let screenContext = null;
+    let screenDescription = '';
     try {
       console.log('   👁️ Capturing screen context...');
       const ssResult = await toolExecutor('take_screenshot', {});
       if (ssResult.success && ssResult.screenshot_base64) {
-        // Resize/compress for API efficiency (keep it under 1MB)
-        screenContext = ssResult.screenshot_base64.slice(0, 500000);
-        console.log('   👁️ Screen captured — JARVIS can see your screen');
+        // Since not all models support vision via OpenRouter free tier,
+        // we describe the screenshot status instead of sending raw image
+        screenDescription = '\n[A screenshot of the current screen has been captured and is available via the take_screenshot tool if you need to see it again.]';
+        console.log('   👁️ Screen captured — JARVIS has context');
       }
     } catch (e) {
       console.log('   👁️ Screen capture skipped:', e.message);
     }
 
-    // Build the message with vision
-    const messageParts = [];
-    if (screenContext) {
-      messageParts.push({
-        inlineData: {
-          mimeType: 'image/png',
-          data: screenContext,
-        },
-      });
-      messageParts.push({ text: `[Current screen is attached above]\n\nUser: ${userMessage}` });
-    } else {
-      messageParts.push({ text: userMessage });
-    }
+    // Build the conversation
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history,
+      { role: 'user', content: userMessage + screenDescription },
+    ];
 
-    // Start chat with history
-    const chat = model.startChat({ history });
-
-    let response = await sendWithRetry(chat, messageParts);
+    let result = await sendWithRetry(messages, TOOLS);
     let screenshotBase64 = null;
 
-    // Function calling loop — AI may call multiple tools
-    // After UI-interaction tools, we auto-capture a screenshot so AI can verify
+    // Function calling loop
     const UI_TOOLS = new Set(['focus_window', 'type_text', 'press_keys', 'click_at']);
-    let maxIterations = 15; // Safety limit
+    let maxIterations = 15;
+
     while (maxIterations-- > 0) {
-      const candidate = response.response.candidates?.[0];
-      if (!candidate) break;
+      const choice = result.choices?.[0];
+      if (!choice) break;
 
-      const parts = candidate.content?.parts || [];
-      const functionCalls = parts.filter(p => p.functionCall);
+      const msg = choice.message;
+      
+      // Check if AI wants to call tools
+      if (!msg.tool_calls || msg.tool_calls.length === 0) break;
 
-      if (functionCalls.length === 0) break; // AI is done calling tools
+      // Add assistant's tool_calls message to conversation
+      messages.push(msg);
 
-      // Execute each function call
-      const functionResponses = [];
       let didUIAction = false;
 
-      for (const part of functionCalls) {
-        const { name, args } = part.functionCall;
-        console.log(`   🔧 JARVIS calling: ${name}(${JSON.stringify(args).slice(0, 80)})`);
-
-        let result;
+      // Execute each tool call
+      for (const toolCall of msg.tool_calls) {
+        const fnName = toolCall.function.name;
+        let args = {};
         try {
-          result = await toolExecutor(name, args);
-          // Capture screenshots from explicit take_screenshot calls
-          if (name === 'take_screenshot' && result.screenshot_base64) {
-            screenshotBase64 = result.screenshot_base64;
-          }
-          if (UI_TOOLS.has(name)) didUIAction = true;
-        } catch (err) {
-          result = { success: false, error: err.message };
+          args = JSON.parse(toolCall.function.arguments || '{}');
+        } catch (e) {
+          args = {};
         }
 
-        functionResponses.push({
-          functionResponse: {
-            name,
-            response: result,
-          },
+        console.log(`   🔧 JARVIS calling: ${fnName}(${JSON.stringify(args).slice(0, 80)})`);
+
+        let toolResult;
+        try {
+          toolResult = await toolExecutor(fnName, args);
+          if (fnName === 'take_screenshot' && toolResult.screenshot_base64) {
+            screenshotBase64 = toolResult.screenshot_base64;
+            // Don't send raw base64 to the model — just tell it the screenshot was taken
+            toolResult = { success: true, message: 'Screenshot captured successfully. The screen shows the current state of the PC.' };
+          }
+          if (UI_TOOLS.has(fnName)) didUIAction = true;
+        } catch (err) {
+          toolResult = { success: false, error: err.message };
+        }
+
+        // Add tool result to conversation
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(toolResult),
         });
       }
 
-      // ---- VISUAL FEEDBACK: After UI actions, capture the screen so AI can see the result ----
+      // Visual feedback: after UI actions, auto-capture
       if (didUIAction) {
         try {
-          await new Promise(r => setTimeout(r, 400)); // Wait for UI to settle
+          await new Promise(r => setTimeout(r, 400));
           const verifyShot = await toolExecutor('take_screenshot', {});
           if (verifyShot.success && verifyShot.screenshot_base64) {
             screenshotBase64 = verifyShot.screenshot_base64;
-            // Add the screenshot as an inline image in the response
-            functionResponses.push({
-              functionResponse: {
-                name: 'screen_after_action',
-                response: { note: 'This is a screenshot of the screen AFTER your actions. Use it to verify the result.' },
-              },
-            });
-            // We'll include the image inline with the function responses
-            console.log('   👁️ Post-action screenshot captured — AI can verify');
+            console.log('   👁️ Post-action screenshot captured');
           }
         } catch (e) {
           // Non-critical
         }
       }
 
-      // Send tool results back to AI for interpretation
-      response = await sendWithRetry(chat, functionResponses);
+      // Send results back to AI for next step
+      result = await sendWithRetry(messages, TOOLS);
     }
 
-    // Extract the final text response
-    const text = response.response.text() || "Done.";
+    // Extract final text response
+    const text = result.choices?.[0]?.message?.content || 'Done.';
 
-    // Update conversation history (text only, no images for history to save tokens)
-    history.push({ role: 'user', parts: [{ text: userMessage }] });
-    history.push({ role: 'model', parts: [{ text }] });
+    // Update conversation history (keep it lean)
+    history.push({ role: 'user', content: userMessage });
+    history.push({ role: 'assistant', content: text });
 
     return { text, screenshot_base64: screenshotBase64 };
 
   } catch (err) {
     console.error('🧠 JARVIS error:', err.message);
 
-    // Graceful fallback
-    if (err.message.includes('429') || err.message.includes('Resource exhausted')) {
+    if (err.message.includes('429') || err.message.includes('rate')) {
       return { text: "I'm a bit overloaded right now. Please wait a moment and try again. (Rate limit reached)" };
     }
 
@@ -402,26 +445,54 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
 }
 
 /**
- * Send message with retry logic for rate limits
+ * Send with retry + smart model fallback for rate limits
  */
-async function sendWithRetry(chat, message, maxRetries = 3) {
+const FALLBACK_MODELS = [
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'deepseek/deepseek-v4-flash:free',
+  'google/gemma-4-31b-it:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-coder:free',
+];
+
+async function sendWithRetry(messages, tools, maxRetries = 3) {
+  const originalModel = modelId;
+  
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await chat.sendMessage(message);
+      const result = await chatCompletion(messages, tools);
+      return result;
     } catch (err) {
-      if (err.message.includes('429') && attempt < maxRetries - 1) {
-        const wait = (attempt + 1) * 2000; // 2s, 4s, 6s
+      const isRateLimit = err.message.includes('429') || err.message.includes('rate');
+      
+      if (isRateLimit && providerName === 'OpenRouter' && attempt < maxRetries - 1) {
+        // Try next fallback model
+        const currentIdx = FALLBACK_MODELS.indexOf(modelId);
+        const nextIdx = (currentIdx + 1) % FALLBACK_MODELS.length;
+        if (nextIdx !== 0 || currentIdx === -1) {
+          modelId = FALLBACK_MODELS[nextIdx === 0 ? 1 : nextIdx];
+          console.log(`   🔄 Switching to fallback: ${modelId}`);
+        } else {
+          const wait = (attempt + 1) * 3000;
+          console.log(`   ⏳ All models rate-limited, waiting ${wait / 1000}s...`);
+          await new Promise(r => setTimeout(r, wait));
+          modelId = FALLBACK_MODELS[0]; // Reset to primary
+        }
+      } else if (isRateLimit && attempt < maxRetries - 1) {
+        const wait = (attempt + 1) * 3000;
         console.log(`   ⏳ Rate limited, waiting ${wait / 1000}s...`);
         await new Promise(r => setTimeout(r, wait));
       } else {
+        modelId = originalModel; // Restore original
         throw err;
       }
     }
   }
+  modelId = originalModel; // Restore original
 }
 
 /**
- * Clear conversation history for a device
+ * Clear conversation history
  */
 function clearHistory(deviceId) {
   conversationHistories.delete(deviceId);

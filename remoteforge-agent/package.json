@@ -35,7 +35,12 @@
       }
     ]
   },
-  "keywords": ["remote-control", "ai-agent", "jarvis", "desktop"],
+  "keywords": [
+    "remote-control",
+    "ai-agent",
+    "jarvis",
+    "desktop"
+  ],
   "author": "RemoteForge",
   "license": "MIT",
   "type": "commonjs",
@@ -50,7 +55,7 @@
     "systeminformation": "^5.31.6"
   },
   "devDependencies": {
-    "electron": "^36.3.1",
+    "electron": "^36.9.5",
     "electron-builder": "^26.0.12"
   }
 }

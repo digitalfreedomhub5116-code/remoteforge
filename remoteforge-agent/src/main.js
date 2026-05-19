@@ -348,15 +348,39 @@ function showStatusWindow() {
 // ============================================
 
 const fs = require('fs');
-const dotenvPath = path.join(__dirname, '..', '.env');
+
+// Resolve .env path for both dev and packaged builds
+function getDotenvPath() {
+  if (app.isPackaged) {
+    // In packaged portable EXE: look next to the EXE file
+    const exeDir = path.dirname(process.execPath);
+    const portablePath = path.join(exeDir, '.env');
+    if (fs.existsSync(portablePath)) return portablePath;
+    // Fallback: userData folder
+    return path.join(app.getPath('userData'), '.env');
+  }
+  // Dev mode: project root
+  return path.join(__dirname, '..', '.env');
+}
+
+const dotenvPath = getDotenvPath();
+console.log('ENV path:', dotenvPath);
 
 function loadEnv() {
   try {
     const content = fs.readFileSync(dotenvPath, 'utf-8');
     const env = {};
     for (const line of content.split('\n')) {
-      const [key, ...vals] = line.split('=');
-      if (key && vals.length) env[key.trim()] = vals.join('=').trim();
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        env[trimmed.substring(0, eqIdx).trim()] = trimmed.substring(eqIdx + 1).trim();
+      }
+    }
+    // Also set in process.env so child processes inherit
+    for (const [k, v] of Object.entries(env)) {
+      if (!process.env[k]) process.env[k] = v;
     }
     return env;
   } catch { return {}; }

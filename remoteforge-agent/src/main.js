@@ -448,15 +448,20 @@ function showLoginWindow() {
 // Supabase Auth from Main Process
 // ============================================
 
+// Public client credentials (same as mobile app — safe to embed)
+const SUPABASE_DEFAULTS = {
+  url: 'https://ciuncyjzdkvmqusssvcb.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpdW5jeWp6ZGt2bXF1c3NzdmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMjc3ODQsImV4cCI6MjA5NDcwMzc4NH0.P7m1Y8UVaWPhhIewKD4Xifrylmu1vZvwcPNr_vcS6B0',
+};
+
 let supabaseAuth = null;
 
 function getSupabaseAuth() {
   if (supabaseAuth) return supabaseAuth;
   const { createClient } = require('@supabase/supabase-js');
   const env = loadEnv();
-  const url = env.SUPABASE_URL || process.env.SUPABASE_URL;
-  const key = env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
+  const url = env.SUPABASE_URL || process.env.SUPABASE_URL || SUPABASE_DEFAULTS.url;
+  const key = env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || SUPABASE_DEFAULTS.anonKey;
   supabaseAuth = createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
@@ -497,8 +502,7 @@ ipcMain.handle('sign-in', async (_, email, password) => {
 
 ipcMain.handle('sign-in-google', async () => {
   const env = loadEnv();
-  const url = env.SUPABASE_URL || process.env.SUPABASE_URL;
-  if (!url) return { error: 'Supabase not configured' };
+  const url = env.SUPABASE_URL || process.env.SUPABASE_URL || SUPABASE_DEFAULTS.url;
 
   // Start a local server FIRST to handle the OAuth callback
   const http = require('http');

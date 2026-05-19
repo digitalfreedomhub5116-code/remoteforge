@@ -202,10 +202,22 @@ function startAgent() {
   addLog('Starting JARVIS agent...');
 
   const agentPath = path.join(__dirname, 'agent.js');
+
+  // Load latest env (includes tokens saved after sign-in)
+  const env = loadEnv();
   
+  // Build child env: merge process.env + fresh .env values
+  // Explicitly set tokens to ensure they're never stale
+  const childEnv = {
+    ...process.env,
+    ...env,
+    USER_ACCESS_TOKEN: process.env.USER_ACCESS_TOKEN || env.USER_ACCESS_TOKEN || '',
+    USER_REFRESH_TOKEN: process.env.USER_REFRESH_TOKEN || env.USER_REFRESH_TOKEN || '',
+  };
+
   agentProcess = fork(agentPath, [], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env },
+    env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
   });
 

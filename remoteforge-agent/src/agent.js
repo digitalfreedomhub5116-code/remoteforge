@@ -9,7 +9,15 @@
  */
 
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const fs = require('fs');
+
+// Load .env only if it exists and only for vars NOT already set
+// In packaged builds, tokens come via process.env from the Electron parent
+const envPath = path.join(__dirname, '..', '.env');
+if (fs.existsSync(envPath)) {
+  require('dotenv').config({ path: envPath, override: false });
+}
+
 const { createClient } = require('@supabase/supabase-js');
 const os = require('os');
 const {

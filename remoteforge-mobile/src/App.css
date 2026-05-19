@@ -1016,3 +1016,38 @@
 }
 .ow-btn.cancel:hover { background: rgba(255,255,255,0.08); }
 
+/* ============================================ */
+/*  Locked Input & Abort Button                  */
+/* ============================================ */
+.input-locked {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; width: 100%;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+}
+.locked-indicator {
+  display: flex; align-items: center; gap: 10px;
+  color: #7a7a85; font-size: 13px; font-weight: 500;
+}
+.locked-spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(138,180,248,0.15);
+  border-top-color: #8ab4f8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.abort-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 8px;
+  font-size: 13px; font-weight: 600;
+  background: rgba(248,113,113,0.12);
+  color: #f87171; border: 1px solid rgba(248,113,113,0.2);
+  cursor: pointer; font-family: inherit;
+  transition: all 0.15s;
+}
+.abort-btn:hover {
+  background: rgba(248,113,113,0.2);
+  border-color: rgba(248,113,113,0.35);
+}
+.abort-btn:active { transform: scale(0.97); }

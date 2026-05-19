@@ -145,6 +145,12 @@ export default function ChatScreen({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const timedOutIds = useCommandTimeouts(commands);
 
+  // Single-command lock: find if any command is currently active
+  const activeCommand = commands.find(c => 
+    c.status === 'pending' || c.status === 'processing' || c.status === 'executing' || c.status === 'planning'
+  );
+  const isLocked = !!activeCommand;
+
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
@@ -153,7 +159,7 @@ export default function ChatScreen({
   }, [input]);
 
   function handleSend() {
-    if (!input.trim()) return;
+    if (!input.trim() || isLocked) return;
 
     // Show offline warning if PC is offline
     if (connectionStatus === 'offline' && !showOfflineWarning) {
@@ -167,9 +173,16 @@ export default function ChatScreen({
   }
 
   function sendAnyway() {
+    if (isLocked) return;
     setShowOfflineWarning(false);
     onSend(input, mode);
     setInput('');
+  }
+
+  function handleAbort() {
+    if (activeCommand) {
+      onCancel(activeCommand.id);
+    }
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -384,23 +397,38 @@ export default function ChatScreen({
 
       {/* Input */}
       <div className="chat-input-bar">
-        <div className="input-container">
-          <textarea
-            ref={inputRef}
-            rows={1}
-            placeholder="Ask JARVIS..."
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-          />
-          {input.trim() && (
-            <button className="send-btn" onClick={handleSend}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+        {isLocked ? (
+          <div className="input-locked">
+            <div className="locked-indicator">
+              <div className="locked-spinner" />
+              <span>JARVIS is working...</span>
+            </div>
+            <button className="abort-btn" onClick={handleAbort}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
+              Abort
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="input-container">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              placeholder="Ask JARVIS..."
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+            />
+            {input.trim() && (
+              <button className="send-btn" onClick={handleSend}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

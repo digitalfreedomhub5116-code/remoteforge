@@ -313,7 +313,7 @@ async function chatCompletion(messages, tools = null) {
  * Process a user message through JARVIS
  * Returns: { text: string, screenshot_base64?: string }
  */
-async function processWithJarvis(userMessage, deviceId, toolExecutor) {
+async function processWithJarvis(userMessage, deviceId, toolExecutor, isCancelled) {
   if (!apiKey) {
     return { text: "I'm currently running in basic mode. Please add an API key to enable full JARVIS capabilities." };
   }
@@ -330,26 +330,13 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
   }
 
   try {
-    // ---- VISION: Auto-capture screen before processing ----
-    let screenDescription = '';
-    try {
-      console.log('   👁️ Capturing screen context...');
-      const ssResult = await toolExecutor('take_screenshot', {});
-      if (ssResult.success && ssResult.screenshot_base64) {
-        // Since not all models support vision via OpenRouter free tier,
-        // we describe the screenshot status instead of sending raw image
-        screenDescription = '\n[A screenshot of the current screen has been captured and is available via the take_screenshot tool if you need to see it again.]';
-        console.log('   👁️ Screen captured — JARVIS has context');
-      }
-    } catch (e) {
-      console.log('   👁️ Screen capture skipped:', e.message);
-    }
+    console.log('   🧠 Sending to AI...');
 
-    // Build the conversation
+    // Build the conversation — no pre-screenshot for speed
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT },
       ...history,
-      { role: 'user', content: userMessage + screenDescription },
+      { role: 'user', content: userMessage },
     ];
 
     let result = await sendWithRetry(messages, TOOLS);
@@ -362,6 +349,12 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
     while (maxIterations-- > 0) {
       const choice = result.choices?.[0];
       if (!choice) break;
+
+      // Check if command was cancelled/aborted
+      if (isCancelled && await isCancelled()) {
+        console.log('   ⏹ Command aborted by user');
+        return { text: '', cancelled: true };
+      }
 
       const msg = choice.message;
       
@@ -390,7 +383,6 @@ async function processWithJarvis(userMessage, deviceId, toolExecutor) {
           toolResult = await toolExecutor(fnName, args);
           if (fnName === 'take_screenshot' && toolResult.screenshot_base64) {
             screenshotBase64 = toolResult.screenshot_base64;
-            // Don't send raw base64 to the model — just tell it the screenshot was taken
             toolResult = { success: true, message: 'Screenshot captured successfully. The screen shows the current state of the PC.' };
           }
           if (UI_TOOLS.has(fnName)) didUIAction = true;

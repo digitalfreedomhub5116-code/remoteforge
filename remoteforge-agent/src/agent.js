@@ -284,9 +284,21 @@ Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; pu
 /**
  * Process an incoming command — routes through JARVIS brain
  */
+// Track current processing command for abort
+let currentCommandId = null;
+
 async function processCommand(command) {
   const { id, raw_input, command_type } = command;
   console.log(`\n⚡ Command received: "${raw_input}"`);
+
+  // Check if already cancelled before we start
+  const { data: fresh } = await supabase.from('commands').select('status').eq('id', id).single();
+  if (fresh && fresh.status === 'cancelled') {
+    console.log('⏹ Command was cancelled before processing, skipping.');
+    return;
+  }
+
+  currentCommandId = id;
 
   // Notify Electron parent of new command
   sendToParent({ id, raw_input, command_type, status: 'processing', created_at: command.created_at || new Date().toISOString() });
@@ -300,9 +312,19 @@ async function processCommand(command) {
   try {
     console.log('🧠 JARVIS thinking...');
 
-    // Send to JARVIS brain — it handles everything:
-    // thinking, tool calling, retrying, natural language response
-    const result = await processWithJarvis(raw_input, deviceId, executeTool);
+    // Send to JARVIS brain — pass cancellation checker
+    const isCancelled = async () => {
+      const { data } = await supabase.from('commands').select('status').eq('id', id).single();
+      return data && data.status === 'cancelled';
+    };
+    const result = await processWithJarvis(raw_input, deviceId, executeTool, isCancelled);
+
+    // Check if cancelled during processing
+    if (result.cancelled) {
+      console.log('⏹ Command was aborted during processing.');
+      currentCommandId = null;
+      return;
+    }
 
     console.log(`✅ JARVIS: ${result.text.slice(0, 80)}...`);
 
@@ -334,6 +356,7 @@ async function processCommand(command) {
     // Notify Electron parent of failure
     sendToParent({ id, raw_input, status: 'failed', result_stderr: err.message, created_at: command.created_at || new Date().toISOString() });
   }
+  currentCommandId = null;
 }
 
 /**

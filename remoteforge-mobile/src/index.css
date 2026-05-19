@@ -16,6 +16,30 @@
   --color-red: #f28b82;
   --color-user-bg: #2b3245;
   --font-sans: "Google Sans Text", "Google Sans", system-ui, -apple-system, sans-serif;
+  --radius: 0.625rem;
+}
+
+/* ---- shadcn CSS variables ---- */
+:root {
+  --background: #131314;
+  --foreground: #e3e3e3;
+  --card: #1e1f20;
+  --card-foreground: #e3e3e3;
+  --popover: #1e1f20;
+  --popover-foreground: #e3e3e3;
+  --primary: #8ab4f8;
+  --primary-foreground: #131314;
+  --secondary: #282a2c;
+  --secondary-foreground: #e3e3e3;
+  --muted: #282a2c;
+  --muted-foreground: #8e918f;
+  --accent: #282a2c;
+  --accent-foreground: #e3e3e3;
+  --destructive: #f28b82;
+  --destructive-foreground: #131314;
+  --border: #303134;
+  --input: #303134;
+  --ring: #8ab4f8;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from './lib/supabase';
+import AuthPage from './components/auth-page';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -56,10 +57,6 @@ function StreamingText({ text, shouldAnimate }: { text: string; shouldAnimate: b
 export default function App() {
   // Auth
   const [session, setSession] = useState<any>(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState('');
 
   // Data
   const [devices, setDevices] = useState<Device[]>([]);
@@ -68,14 +65,14 @@ export default function App() {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'execute' | 'plan'>('execute');
   const [modelOpen, setModelOpen] = useState(false);
-  const [model, setModel] = useState('Gemini 2.5 Flash');
+  const [model, setModel] = useState('JARVIS');
 
   // Streaming tracker
   const [streamedIds, setStreamedIds] = useState<Set<string>>(new Set());
 
   const chatEnd = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const models = ['Gemini 2.5 Flash', 'Gemini 2.5 Pro', 'GPT-4o', 'Claude Sonnet'];
+  const models = ['JARVIS', 'Nemotron 120B', 'DeepSeek V4', 'Gemma 4'];
 
   /* ---- Auth ---- */
   useEffect(() => {
@@ -130,13 +127,6 @@ export default function App() {
   }, []);
 
   /* ---- Handlers ---- */
-  async function handleAuth(e: React.FormEvent) {
-    e.preventDefault(); setAuthLoading(true); setAuthError('');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthError(error.message);
-    setAuthLoading(false);
-  }
-
   async function send() {
     if (!input.trim() || !selectedDevice) return;
     const raw = input.trim();
@@ -158,32 +148,10 @@ export default function App() {
   }
 
   /* ================================================================ */
-  /*  LOGIN                                                            */
+  /*  LOGIN / SIGNUP                                                    */
   /* ================================================================ */
   if (!session) {
-    return (
-      <div className="flex items-center justify-center h-full px-8" style={{ background: '#131314' }}>
-        <div className="w-full max-w-[340px]">
-          <div className="text-center mb-12">
-            <h1 className="text-[28px] font-medium tracking-tight text-text">RemoteForge</h1>
-            <p className="text-text-muted text-[14px] mt-2">Sign in to control your PC</p>
-          </div>
-          <form onSubmit={handleAuth} className="space-y-4">
-            <input type="email" placeholder="Email" autoComplete="email"
-              className="w-full bg-surface border border-border rounded-xl px-4 py-3.5 text-[15px] text-text placeholder:text-text-dim focus:border-accent transition-colors"
-              value={email} onChange={e => setEmail(e.target.value)} />
-            <input type="password" placeholder="Password" autoComplete="current-password"
-              className="w-full bg-surface border border-border rounded-xl px-4 py-3.5 text-[15px] text-text placeholder:text-text-dim focus:border-accent transition-colors"
-              value={password} onChange={e => setPassword(e.target.value)} />
-            {authError && <p className="text-red text-[13px] pl-1">{authError}</p>}
-            <button disabled={authLoading}
-              className="w-full bg-accent text-bg font-medium rounded-xl py-3.5 text-[15px] active:scale-[0.98] transition-all disabled:opacity-40 cursor-pointer">
-              {authLoading ? 'Signing in...' : 'Sign in'}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
+    return <AuthPage />;
   }
 
   /* ================================================================ */

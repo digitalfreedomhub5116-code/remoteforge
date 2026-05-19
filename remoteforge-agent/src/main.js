@@ -341,9 +341,190 @@ function showStatusWindow() {
 }
 
 // ============================================
-// IPC Handlers (communication with status window)
+// Auth Helpers
 // ============================================
 
+const fs = require('fs');
+const dotenvPath = path.join(__dirname, '..', '.env');
+
+function loadEnv() {
+  try {
+    const content = fs.readFileSync(dotenvPath, 'utf-8');
+    const env = {};
+    for (const line of content.split('\n')) {
+      const [key, ...vals] = line.split('=');
+      if (key && vals.length) env[key.trim()] = vals.join('=').trim();
+    }
+    return env;
+  } catch { return {}; }
+}
+
+function saveTokensToEnv(accessToken, refreshToken) {
+  let content = '';
+  try { content = fs.readFileSync(dotenvPath, 'utf-8'); } catch {}
+  
+  if (content.includes('USER_ACCESS_TOKEN=')) {
+    content = content.replace(/USER_ACCESS_TOKEN=.*/, `USER_ACCESS_TOKEN=${accessToken}`);
+  } else {
+    content += `\nUSER_ACCESS_TOKEN=${accessToken}`;
+  }
+  if (content.includes('USER_REFRESH_TOKEN=')) {
+    content = content.replace(/USER_REFRESH_TOKEN=.*/, `USER_REFRESH_TOKEN=${refreshToken}`);
+  } else {
+    content += `\nUSER_REFRESH_TOKEN=${refreshToken}`;
+  }
+  fs.writeFileSync(dotenvPath, content.trim() + '\n');
+}
+
+function hasTokens() {
+  const env = loadEnv();
+  return !!(env.USER_ACCESS_TOKEN && env.USER_REFRESH_TOKEN);
+}
+
+// ============================================
+// Login Window
+// ============================================
+
+let loginWindow = null;
+
+function showLoginWindow() {
+  if (loginWindow && !loginWindow.isDestroyed()) {
+    loginWindow.show();
+    loginWindow.focus();
+    return;
+  }
+
+  loginWindow = new BrowserWindow({
+    width: 460,
+    height: 560,
+    title: 'RemoteForge — Sign In',
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+    backgroundColor: '#0a0a0b',
+    resizable: false,
+    maximizable: false,
+    frame: true,
+  });
+
+  loginWindow.loadFile(path.join(__dirname, '..', 'ui', 'login.html'));
+
+  loginWindow.on('closed', () => {
+    loginWindow = null;
+  });
+}
+
+// ============================================
+// Supabase Auth from Main Process
+// ============================================
+
+let supabaseAuth = null;
+
+function getSupabaseAuth() {
+  if (supabaseAuth) return supabaseAuth;
+  const { createClient } = require('@supabase/supabase-js');
+  const env = loadEnv();
+  const url = env.SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = env.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  supabaseAuth = createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return supabaseAuth;
+}
+
+// ============================================
+// IPC Handlers
+// ============================================
+
+// Auth handlers
+ipcMain.handle('sign-in', async (_, email, password) => {
+  const sb = getSupabaseAuth();
+  if (!sb) return { error: 'Supabase not configured. Check your .env file.' };
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) return { error: error.message };
+
+  // Save tokens
+  saveTokensToEnv(data.session.access_token, data.session.refresh_token);
+  
+  // Set env vars for the agent process
+  process.env.USER_ACCESS_TOKEN = data.session.access_token;
+  process.env.USER_REFRESH_TOKEN = data.session.refresh_token;
+
+  addLog(`✅ Signed in as ${email}`);
+
+  // Close login, open status, start agent
+  if (loginWindow && !loginWindow.isDestroyed()) {
+    loginWindow.close();
+    loginWindow = null;
+  }
+  showStatusWindow();
+  startAgent();
+
+  return { success: true };
+});
+
+ipcMain.handle('sign-in-google', async () => {
+  const env = loadEnv();
+  const url = env.SUPABASE_URL || process.env.SUPABASE_URL;
+  if (!url) return { error: 'Supabase not configured' };
+
+  // Open Google OAuth in system browser
+  // The user signs in on the browser, gets redirected to the web app
+  // Then they need to copy the token or we use a localhost callback
+  const oauthUrl = `${url}/auth/v1/authorize?provider=google&redirect_to=http://localhost:54321/auth/callback`;
+  shell.openExternal(oauthUrl);
+
+  // Start a temporary local server to capture the callback
+  const http = require('http');
+  const server = http.createServer(async (req, res) => {
+    if (req.url && req.url.includes('/auth/callback')) {
+      const urlObj = new URL(`http://localhost${req.url}`);
+      const accessToken = urlObj.searchParams.get('access_token') || urlObj.hash?.split('access_token=')[1]?.split('&')[0];
+      const refreshToken = urlObj.searchParams.get('refresh_token') || urlObj.hash?.split('refresh_token=')[1]?.split('&')[0];
+
+      if (accessToken && refreshToken) {
+        saveTokensToEnv(accessToken, refreshToken);
+        process.env.USER_ACCESS_TOKEN = accessToken;
+        process.env.USER_REFRESH_TOKEN = refreshToken;
+        
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html><body style="background:#0a0a0b;color:#8ab4f8;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+            <div style="text-align:center"><h2>✅ Signed in!</h2><p style="color:#7a7a85">You can close this tab and return to RemoteForge.</p></div>
+          </body></html>
+        `);
+
+        addLog('✅ Signed in via Google OAuth');
+        if (loginWindow && !loginWindow.isDestroyed()) {
+          loginWindow.close();
+          loginWindow = null;
+        }
+        showStatusWindow();
+        startAgent();
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html><body style="background:#0a0a0b;color:#f87171;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh"><h2>Auth failed — try again</h2></body></html>');
+      }
+      server.close();
+    }
+  });
+
+  server.listen(54321, () => {
+    console.log('OAuth callback server listening on :54321');
+  });
+  
+  // Auto-close after 2 minutes if no callback
+  setTimeout(() => { try { server.close(); } catch {} }, 120000);
+
+  return { success: true };
+});
+
+// Agent control handlers
 ipcMain.handle('get-status', () => agentStatus);
 ipcMain.handle('get-logs', () => lastLogs);
 ipcMain.handle('start-agent', () => startAgent());
@@ -369,11 +550,15 @@ ipcMain.handle('set-auto-launch', async (_, enabled) => {
 app.on('ready', () => {
   createTray();
   
-  // Show the status window on first launch
-  showStatusWindow();
-
-  // Auto-start the agent when the app opens
-  startAgent();
+  // Check if user is already authenticated
+  if (hasTokens()) {
+    // Already signed in — go straight to status window + start agent
+    showStatusWindow();
+    startAgent();
+  } else {
+    // Not signed in — show login window first
+    showLoginWindow();
+  }
 });
 
 // Keep running in tray when all windows closed
@@ -386,9 +571,13 @@ app.on('before-quit', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.destroy();
   }
+  if (loginWindow && !loginWindow.isDestroyed()) {
+    loginWindow.destroy();
+  }
 });
 
 // Handle second instance
 app.on('second-instance', () => {
-  showStatusWindow();
+  if (hasTokens()) showStatusWindow();
+  else showLoginWindow();
 });

@@ -4,6 +4,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('remoteforge', {
+  // Auth
+  signIn: (email, password) => ipcRenderer.invoke('sign-in', email, password),
+  signInWithGoogle: () => ipcRenderer.invoke('sign-in-google'),
+
+  // Agent controls
   getStatus: () => ipcRenderer.invoke('get-status'),
   getLogs: () => ipcRenderer.invoke('get-logs'),
   startAgent: () => ipcRenderer.invoke('start-agent'),
@@ -12,6 +17,7 @@ contextBridge.exposeInMainWorld('remoteforge', {
   getAutoLaunch: () => ipcRenderer.invoke('get-auto-launch'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
   
+  // Live events
   onLog: (callback) => {
     ipcRenderer.on('log', (_, log) => callback(log));
   },

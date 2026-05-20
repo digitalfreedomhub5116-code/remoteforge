@@ -650,13 +650,30 @@ async function main() {
   }
 
   // Step 3: Restore session
-  const { error: sessionError } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
+  let sessionError;
+  try {
+    const result = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    sessionError = result.error;
+  } catch (e) {
+    sessionError = e;
+  }
 
   if (sessionError) {
-    console.error('❌ Session expired — need to re-login');
+    const errMsg = sessionError.message || String(sessionError);
+    console.error(`❌ Session restore failed: ${errMsg}`);
+    // Append to debug log for diagnostics
+    try {
+      const logDir = process.env.APPDATA ? path.join(process.env.APPDATA, 'RemoteForge') : __dirname;
+      const debugFs = require('fs');
+      debugFs.appendFileSync(path.join(logDir, 'agent-debug.log'),
+        `\n\nSESSION ERROR at ${new Date().toISOString()}:\n` +
+        `  Error: ${errMsg}\n` +
+        `  Token length: ${accessToken?.length || 0}\n` +
+        `  Refresh token: ${refreshToken?.substring(0, 4)}***\n`);
+    } catch {}
     // Exit with code 2 to signal main.js to show login window
     process.exit(2);
   }

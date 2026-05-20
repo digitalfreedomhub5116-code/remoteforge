@@ -197,7 +197,7 @@ function updateTrayMenu() {
 /**
  * Start the agent as a child process
  */
-function startAgent() {
+async function startAgent() {
   if (agentProcess) {
     console.log('Agent already running');
     return;
@@ -212,6 +212,32 @@ function startAgent() {
   // Load latest env from userData/.env (tokens from sign-in)
   const env = loadEnv();
   
+  // Get the best available tokens
+  let freshAccessToken = process.env.USER_ACCESS_TOKEN || env.USER_ACCESS_TOKEN || '';
+  let freshRefreshToken = process.env.USER_REFRESH_TOKEN || env.USER_REFRESH_TOKEN || '';
+
+  // Try to refresh the session to get a FRESH token pair
+  // This prevents "Refresh Token Not Found" errors in the agent
+  if (freshRefreshToken) {
+    try {
+      const sb = getSupabaseAuth();
+      const { data, error } = await sb.auth.refreshSession({ refresh_token: freshRefreshToken });
+      if (!error && data?.session) {
+        freshAccessToken = data.session.access_token;
+        freshRefreshToken = data.session.refresh_token;
+        // Save the fresh tokens for next time
+        saveTokensToEnv(freshAccessToken, freshRefreshToken);
+        process.env.USER_ACCESS_TOKEN = freshAccessToken;
+        process.env.USER_REFRESH_TOKEN = freshRefreshToken;
+        addLog('🔑 Session refreshed — fresh tokens ready');
+      } else {
+        addLog('⚠️ Token refresh failed, using stored tokens: ' + (error?.message || 'unknown'));
+      }
+    } catch (e) {
+      addLog('⚠️ Token refresh error: ' + e.message);
+    }
+  }
+
   // Build child env with ALL required config
   // In packaged builds, .env is NOT bundled — all config flows from here
   const childEnv = {
@@ -220,9 +246,9 @@ function startAgent() {
     // Supabase — always ensure these are set (use defaults for packaged builds)
     SUPABASE_URL: process.env.SUPABASE_URL || env.SUPABASE_URL || SUPABASE_DEFAULTS.url,
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY || SUPABASE_DEFAULTS.anonKey,
-    // Auth tokens — fresh from sign-in
-    USER_ACCESS_TOKEN: process.env.USER_ACCESS_TOKEN || env.USER_ACCESS_TOKEN || '',
-    USER_REFRESH_TOKEN: process.env.USER_REFRESH_TOKEN || env.USER_REFRESH_TOKEN || '',
+    // Auth tokens — FRESH from the refresh above
+    USER_ACCESS_TOKEN: freshAccessToken,
+    USER_REFRESH_TOKEN: freshRefreshToken,
     // Device config
     DEVICE_NAME: process.env.DEVICE_NAME || env.DEVICE_NAME || require('os').hostname(),
     COMMAND_TIMEOUT_MS: process.env.COMMAND_TIMEOUT_MS || env.COMMAND_TIMEOUT_MS || '30000',

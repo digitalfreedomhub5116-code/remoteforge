@@ -198,7 +198,19 @@ function updateTrayMenu() {
  * Start the agent as a child process
  */
 async function startAgent() {
+  // File-based diagnostic log for debugging agent start failures
+  const debugLogPath = path.join(app.getPath('appData'), 'RemoteForge', 'main-debug.log');
+  const debugLog = (msg) => {
+    try {
+      const fs = require('fs');
+      fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
+      fs.appendFileSync(debugLogPath, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {}
+  };
+  debugLog('startAgent() called');
+
   if (agentProcess) {
+    debugLog('Agent already running - returning');
     console.log('Agent already running');
     return;
   }
@@ -206,8 +218,15 @@ async function startAgent() {
   agentStatus = 'starting';
   updateTrayMenu();
   addLog('Starting JARVIS agent...');
+  debugLog('Status set to starting');
 
-  const agentPath = path.join(__dirname, 'agent.js');
+  // In packaged builds, agent.js is in app.asar.unpacked (because child_process.fork
+  // can't run scripts from inside an asar archive). Replace app.asar → app.asar.unpacked.
+  let agentPath = path.join(__dirname, 'agent.js');
+  if (app.isPackaged) {
+    agentPath = agentPath.replace('app.asar', 'app.asar.unpacked');
+  }
+  debugLog(`agentPath: ${agentPath} (isPackaged: ${app.isPackaged})`);
 
   // Load latest env from userData/.env (tokens from sign-in)
   const env = loadEnv();
@@ -215,10 +234,12 @@ async function startAgent() {
   // Get the best available tokens
   let freshAccessToken = process.env.USER_ACCESS_TOKEN || env.USER_ACCESS_TOKEN || '';
   let freshRefreshToken = process.env.USER_REFRESH_TOKEN || env.USER_REFRESH_TOKEN || '';
+  debugLog(`Tokens: access=${freshAccessToken.length}chars, refresh=${freshRefreshToken.length}chars`);
 
   // Try to refresh the session to get a FRESH token pair
   // This prevents "Refresh Token Not Found" errors in the agent
   if (freshRefreshToken) {
+    debugLog('Attempting token refresh...');
     try {
       const sb = getSupabaseAuth();
       const { data, error } = await sb.auth.refreshSession({ refresh_token: freshRefreshToken });
@@ -230,11 +251,13 @@ async function startAgent() {
         process.env.USER_ACCESS_TOKEN = freshAccessToken;
         process.env.USER_REFRESH_TOKEN = freshRefreshToken;
         addLog('🔑 Session refreshed — fresh tokens ready');
+        debugLog('Token refresh SUCCESS');
       } else {
         addLog('⚠️ Token refresh failed, using stored tokens: ' + (error?.message || 'unknown'));
       }
     } catch (e) {
       addLog('⚠️ Token refresh error: ' + e.message);
+      debugLog('Token refresh EXCEPTION: ' + e.message);
     }
   }
 
@@ -262,10 +285,28 @@ async function startAgent() {
     GEMINI_API_KEY: process.env.GEMINI_API_KEY || env.GEMINI_API_KEY || '',
   };
 
+  debugLog(`childEnv SUPABASE_URL: ${childEnv.SUPABASE_URL ? 'SET' : 'MISSING'}`);
+  debugLog(`childEnv USER_ACCESS_TOKEN: ${childEnv.USER_ACCESS_TOKEN ? childEnv.USER_ACCESS_TOKEN.length + 'chars' : 'MISSING'}`);
+  debugLog(`Forking agent: ${agentPath}`);
+
+  // In packaged builds, cwd can't be inside asar — use userData directory
+  const agentCwd = app.isPackaged ? app.getPath('userData') : path.join(__dirname, '..');
+
   agentProcess = fork(agentPath, [], {
-    cwd: path.join(__dirname, '..'),
+    cwd: agentCwd,
     env: childEnv,
     stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+  });
+
+  debugLog(`Agent forked, PID: ${agentProcess.pid}`);
+
+  // Capture stderr for crash diagnostics
+  agentProcess.stderr.on('data', (data) => {
+    const errText = data.toString().trim();
+    if (errText) {
+      addLog('⚠️ ' + errText);
+      debugLog('STDERR: ' + errText);
+    }
   });
 
   agentProcess.stdout.on('data', (data) => {
@@ -764,13 +805,26 @@ ipcMain.handle('sign-out', async () => {
 // ============================================
 
 app.on('ready', () => {
+  // File-based diagnostic log
+  const readyLogPath = path.join(app.getPath('appData'), 'RemoteForge', 'main-debug.log');
+  try {
+    const fs = require('fs');
+    fs.mkdirSync(path.dirname(readyLogPath), { recursive: true });
+    fs.appendFileSync(readyLogPath, `\n[${new Date().toISOString()}] app.ready fired\n`);
+    fs.appendFileSync(readyLogPath, `[${new Date().toISOString()}] hasTokens: ${hasTokens()}\n`);
+    fs.appendFileSync(readyLogPath, `[${new Date().toISOString()}] dotenvPath: ${dotenvPath}\n`);
+  } catch {}
+
   createTray();
   
   // Check if user is already authenticated
   if (hasTokens()) {
     // Already signed in — go straight to status window + start agent
     showStatusWindow();
-    startAgent().catch(e => addLog('Agent start failed: ' + e.message));
+    startAgent().catch(e => {
+      try { require('fs').appendFileSync(readyLogPath, `[${new Date().toISOString()}] startAgent CATCH: ${e.message}\n${e.stack}\n`); } catch {}
+      addLog('Agent start failed: ' + e.message);
+    });
   } else {
     // Not signed in — show login window first
     showLoginWindow();

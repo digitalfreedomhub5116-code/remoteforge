@@ -26,6 +26,9 @@
       "ui/**/*",
       "assets/**/*",
       "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "src/**/*"
     ]
   },
   "keywords": [

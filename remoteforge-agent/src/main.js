@@ -545,6 +545,19 @@ function getSupabaseAuth() {
 // ============================================
 
 // Auth handlers
+
+// Return the email from the stored JWT so the UI can show which account is signed in
+ipcMain.handle('get-signed-in-email', async () => {
+  try {
+    const token = process.env.USER_ACCESS_TOKEN;
+    if (!token) return null;
+    // Decode JWT payload (base64url → JSON)
+    const payload = token.split('.')[1];
+    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+    return decoded.email || null;
+  } catch { return null; }
+});
+
 ipcMain.handle('sign-in', async (_, email, password) => {
   const sb = getSupabaseAuth();
   if (!sb) return { error: 'Supabase not configured. Check your .env file.' };

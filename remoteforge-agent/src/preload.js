@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('remoteforge', {
   signIn: (email, password) => ipcRenderer.invoke('sign-in', email, password),
   signInWithGoogle: () => ipcRenderer.invoke('sign-in-google'),
   signOut: () => ipcRenderer.invoke('sign-out'),
+  getSignedInEmail: () => ipcRenderer.invoke('get-signed-in-email'),
 
   // Agent controls
   getStatus: () => ipcRenderer.invoke('get-status'),

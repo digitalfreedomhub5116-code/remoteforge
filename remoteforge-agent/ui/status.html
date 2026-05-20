@@ -284,9 +284,9 @@
 
   <!-- Bottom Bar -->
   <div class="bottom-bar">
-    <div class="bottom-left">
-      <span class="brain-label">Brain: <strong>Nemotron 120B</strong></span>
-      <button class="btn danger" onclick="signOut()" style="margin-left: 8px; font-size: 11px; padding: 4px 10px;">Logout</button>
+    <div class="bottom-left" style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+      <span id="signedInEmail" style="font-size: 11px; color: #8ab4f8; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 200px;" title=""></span>
+      <button class="btn danger" onclick="signOut()" style="font-size: 11px; padding: 4px 10px; flex-shrink: 0;">Logout</button>
     </div>
     <div class="bottom-right">
       <button class="btn primary" id="startBtn" onclick="startAgent()">Start</button>
@@ -298,6 +298,18 @@
   <script>
     // ---- State ----
     let currentCode = '';
+
+    // Show signed-in email
+    (async () => {
+      try {
+        const email = await window.remoteforge.getSignedInEmail();
+        const el = document.getElementById('signedInEmail');
+        if (email && el) {
+          el.textContent = email;
+          el.title = 'Signed in as: ' + email;
+        }
+      } catch {}
+    })();
 
     // ---- Pairing Code Display ----
     function updatePairingCode(code) {

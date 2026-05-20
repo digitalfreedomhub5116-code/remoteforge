@@ -597,6 +597,28 @@ process.on('SIGTERM', shutdown);
 // Main Entry Point
 // ============================================
 async function main() {
+  // Debug: write startup log to a known location
+  try {
+    const logDir = process.env.APPDATA ? path.join(process.env.APPDATA, 'RemoteForge') : __dirname;
+    const debugFs = require('fs');
+    debugFs.mkdirSync(logDir, { recursive: true });
+    const debugLog = [
+      `Agent started at: ${new Date().toISOString()}`,
+      `SUPABASE_URL: ${process.env.SUPABASE_URL ? 'SET (' + process.env.SUPABASE_URL.slice(0, 30) + '...)' : 'MISSING'}`,
+      `SUPABASE_ANON_KEY: ${process.env.SUPABASE_ANON_KEY ? 'SET (' + process.env.SUPABASE_ANON_KEY.slice(0, 20) + '...)' : 'MISSING'}`,
+      `USER_ACCESS_TOKEN: ${process.env.USER_ACCESS_TOKEN ? 'SET (length=' + process.env.USER_ACCESS_TOKEN.length + ')' : 'MISSING/EMPTY'}`,
+      `USER_REFRESH_TOKEN: ${process.env.USER_REFRESH_TOKEN ? 'SET (length=' + process.env.USER_REFRESH_TOKEN.length + ')' : 'MISSING/EMPTY'}`,
+      `AI_API_KEY: ${process.env.AI_API_KEY ? 'SET' : 'MISSING'}`,
+      `DEVICE_NAME: ${process.env.DEVICE_NAME || 'NOT SET'}`,
+      `__dirname: ${__dirname}`,
+      `cwd: ${process.cwd()}`,
+      `app.isPackaged context: ${!!process.env.ELECTRON_IS_PACKAGED || 'unknown'}`,
+    ].join('\n');
+    debugFs.writeFileSync(path.join(logDir, 'agent-debug.log'), debugLog);
+  } catch (e) {
+    console.error('Debug log failed:', e.message);
+  }
+
   console.log('');
   console.log('╔══════════════════════════════════════╗');
   console.log('║     🔥 RemoteForge Desktop Agent     ║');

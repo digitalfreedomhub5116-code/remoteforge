@@ -117,7 +117,7 @@ function updateTrayMenu() {
       label: 'Start Agent',
       type: 'normal',
       enabled: agentStatus === 'stopped' || agentStatus === 'error',
-      click: () => startAgent(),
+      click: () => startAgent().catch(e => addLog('Agent start failed: ' + e.message)),
     },
     {
       label: 'Stop Agent',
@@ -129,7 +129,7 @@ function updateTrayMenu() {
       label: 'Restart Agent',
       type: 'normal',
       enabled: agentStatus === 'running',
-      click: () => { stopAgent(); setTimeout(() => startAgent(), 1500); },
+      click: () => { stopAgent(); setTimeout(() => startAgent().catch(e => addLog('Agent start failed: ' + e.message)), 1500); },
     },
     { type: 'separator' },
     {
@@ -619,7 +619,7 @@ ipcMain.handle('sign-in', async (_, email, password) => {
     loginWindow = null;
   }
   showStatusWindow();
-  startAgent();
+  startAgent().catch(e => addLog('Agent start failed: ' + e.message));
 
   return { success: true };
 });
@@ -671,7 +671,7 @@ ipcMain.handle('sign-in-google', async () => {
           loginWindow = null;
         }
         showStatusWindow();
-        startAgent();
+        startAgent().catch(e => addLog('Agent start failed: ' + e.message));
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end('{"ok":true}');
@@ -727,11 +727,11 @@ ipcMain.handle('sign-in-google', async () => {
 // Agent control handlers
 ipcMain.handle('get-status', () => agentStatus);
 ipcMain.handle('get-logs', () => lastLogs);
-ipcMain.handle('start-agent', () => startAgent());
+ipcMain.handle('start-agent', () => startAgent().catch(e => addLog('Agent start failed: ' + e.message)));
 ipcMain.handle('stop-agent', () => stopAgent());
 ipcMain.handle('restart-agent', () => {
   stopAgent();
-  setTimeout(() => startAgent(), 1500);
+  setTimeout(() => startAgent().catch(e => addLog('Agent start failed: ' + e.message)), 1500);
 });
 ipcMain.handle('get-auto-launch', async () => {
   if (!autoLauncher) return false;
@@ -770,7 +770,7 @@ app.on('ready', () => {
   if (hasTokens()) {
     // Already signed in — go straight to status window + start agent
     showStatusWindow();
-    startAgent();
+    startAgent().catch(e => addLog('Agent start failed: ' + e.message));
   } else {
     // Not signed in — show login window first
     showLoginWindow();

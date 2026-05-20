@@ -51,6 +51,31 @@
     .status-pip { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
     .status-pill.running .status-pip { box-shadow: 0 0 6px rgba(52,211,153,0.5); }
 
+    /* ---- Account Bar ---- */
+    .account-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 20px;
+      background: rgba(138,180,248,0.04);
+      border-bottom: 1px solid rgba(138,180,248,0.08);
+      flex-shrink: 0;
+    }
+    .account-bar .account-icon {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: linear-gradient(135deg, #8ab4f8, #669df6);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .account-bar .account-icon svg { width: 12px; height: 12px; }
+    .account-bar .account-label {
+      font-size: 11px; color: #6a6a75; font-weight: 500;
+    }
+    .account-bar .account-email {
+      font-size: 12px; color: #8ab4f8; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
     /* ---- Tab Bar ---- */
     .tab-bar {
       display: flex; padding: 0 20px; background: #111113;
@@ -223,6 +248,18 @@
     </div>
   </div>
 
+  <!-- Account Bar -->
+  <div class="account-bar" id="accountBar" style="display: none;">
+    <div class="account-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+    </div>
+    <span class="account-label">Signed in as:</span>
+    <span class="account-email" id="accountEmail">—</span>
+  </div>
+
   <!-- Tabs -->
   <div class="tab-bar">
     <div class="tab active" data-tab="connect">Pairing</div>
@@ -299,14 +336,24 @@
     // ---- State ----
     let currentCode = '';
 
-    // Show signed-in email
+    // Show signed-in email in account bar + footer
     (async () => {
       try {
         const email = await window.remoteforge.getSignedInEmail();
-        const el = document.getElementById('signedInEmail');
-        if (email && el) {
-          el.textContent = email;
-          el.title = 'Signed in as: ' + email;
+        if (email) {
+          // Account bar (prominent)
+          const bar = document.getElementById('accountBar');
+          const emailEl = document.getElementById('accountEmail');
+          if (bar && emailEl) {
+            emailEl.textContent = email;
+            bar.style.display = 'flex';
+          }
+          // Footer (small)
+          const footerEl = document.getElementById('signedInEmail');
+          if (footerEl) {
+            footerEl.textContent = email;
+            footerEl.title = 'Signed in as: ' + email;
+          }
         }
       } catch {}
     })();

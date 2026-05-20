@@ -28,7 +28,8 @@
       "node_modules/**/*"
     ],
     "asarUnpack": [
-      "src/**/*"
+      "src/**/*",
+      "node_modules/**/*"
     ]
   },
   "keywords": [

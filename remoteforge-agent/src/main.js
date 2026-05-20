@@ -29,6 +29,15 @@ let lastLogs = [];
 let currentPairingCode = null;
 const MAX_LOGS = 100;
 
+// Auto-restart state
+let restartCount = 0;
+let lastStartTimestamp = null;
+let intentionalStop = false;
+let autoRestartTimer = null;
+const RESTART_DELAYS = [3, 10, 30]; // seconds: 1st, 2nd, 3rd attempt
+const MAX_AUTO_RESTARTS = 3;
+const STABLE_RUN_THRESHOLD_MS = 60000; // reset counter after 60s of uptime
+
 // Supabase public client credentials (safe to embed — these are anon keys)
 const SUPABASE_DEFAULTS = {
   url: 'https://ciuncyjzdkvmqusssvcb.supabase.co',
@@ -209,6 +218,10 @@ async function startAgent() {
   };
   debugLog('startAgent() called');
 
+  // Reset intentional-stop flag and record start time
+  intentionalStop = false;
+  lastStartTimestamp = Date.now();
+
   if (agentProcess) {
     debugLog('Agent already running - returning');
     console.log('Agent already running');
@@ -346,17 +359,21 @@ async function startAgent() {
   agentProcess.on('error', (err) => {
     agentStatus = 'error';
     addLog(`Agent error: ${err.message}`);
+    debugLog(`Agent error event: ${err.message}`);
     updateTrayMenu();
     agentProcess = null;
   });
 
   agentProcess.on('exit', (code) => {
+    debugLog(`Agent exit event: code=${code}, intentionalStop=${intentionalStop}`);
+    agentProcess = null;
+
     if (code === 2) {
       // Exit code 2 = auth expired, need re-login
       agentStatus = 'stopped';
+      restartCount = 0;
       addLog('🔒 Session expired — please sign in again');
       updateTrayMenu();
-      agentProcess = null;
       // Auto-show login window
       saveTokensToEnv('', '');
       process.env.USER_ACCESS_TOKEN = '';
@@ -368,15 +385,49 @@ async function startAgent() {
       showLoginWindow();
       return;
     }
-    if (code !== 0 && code !== null) {
-      agentStatus = 'error';
-      addLog(`Agent exited with code ${code}`);
-    } else {
+
+    if (intentionalStop || code === 0 || code === null) {
+      // Clean stop — no auto-restart
       agentStatus = 'stopped';
+      restartCount = 0;
       addLog('Agent stopped');
+      updateTrayMenu();
+      return;
     }
-    updateTrayMenu();
-    agentProcess = null;
+
+    // --- Crash detected (non-zero, non-2 exit code) ---
+    addLog(`Agent exited with code ${code}`);
+    debugLog(`Crash detected. restartCount=${restartCount}, max=${MAX_AUTO_RESTARTS}`);
+
+    // Check if agent ran long enough to reset the counter
+    if (lastStartTimestamp && (Date.now() - lastStartTimestamp) > STABLE_RUN_THRESHOLD_MS) {
+      debugLog('Agent was stable for >60s — resetting restartCount');
+      restartCount = 0;
+    }
+
+    if (restartCount < MAX_AUTO_RESTARTS) {
+      const delay = RESTART_DELAYS[restartCount] || RESTART_DELAYS[RESTART_DELAYS.length - 1];
+      restartCount++;
+      agentStatus = 'error';
+      addLog(`🔄 Auto-restarting in ${delay}s... (attempt ${restartCount}/${MAX_AUTO_RESTARTS})`);
+      debugLog(`Scheduling auto-restart #${restartCount} in ${delay}s`);
+      updateTrayMenu();
+
+      autoRestartTimer = setTimeout(() => {
+        autoRestartTimer = null;
+        addLog(`🔄 Restarting agent now (attempt ${restartCount}/${MAX_AUTO_RESTARTS})...`);
+        startAgent().catch(e => {
+          addLog('Auto-restart failed: ' + e.message);
+          debugLog('Auto-restart startAgent() CATCH: ' + e.message);
+        });
+      }, delay * 1000);
+    } else {
+      agentStatus = 'error';
+      addLog(`❌ Agent crashed ${MAX_AUTO_RESTARTS} times — giving up. Please restart manually.`);
+      debugLog('Max auto-restarts reached, giving up');
+      restartCount = 0;
+      updateTrayMenu();
+    }
   });
 
   // Set a timeout for starting status
@@ -393,6 +444,14 @@ async function startAgent() {
  */
 function stopAgent() {
   if (!agentProcess) return;
+
+  intentionalStop = true;
+
+  // Cancel any pending auto-restart
+  if (autoRestartTimer) {
+    clearTimeout(autoRestartTimer);
+    autoRestartTimer = null;
+  }
 
   addLog('Stopping agent...');
   agentProcess.kill('SIGTERM');

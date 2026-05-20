@@ -1,5 +1,107 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Device, Command, ConnectionStatus } from '../App';
+
+/* ---- Screenshot Viewer (fullscreen zoom) ---- */
+function ScreenshotViewer({ src, onClose }: { src: string; onClose: () => void }) {
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const lastPinchDist = useRef<number | null>(null);
+  const lastTap = useRef(0);
+  const panStart = useRef<{ x: number; y: number } | null>(null);
+  const translateStart = useRef({ x: 0, y: 0 });
+  const imgRef = useRef<HTMLDivElement>(null);
+
+  // Reset on open
+  useEffect(() => {
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+  }, [src]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastPinchDist.current = Math.hypot(dx, dy);
+    } else if (e.touches.length === 1) {
+      // Double-tap detection
+      const now = Date.now();
+      if (now - lastTap.current < 300) {
+        // Toggle zoom
+        setScale(prev => {
+          const next = prev > 1 ? 1 : 2.5;
+          if (next === 1) setTranslate({ x: 0, y: 0 });
+          return next;
+        });
+        lastTap.current = 0;
+      } else {
+        lastTap.current = now;
+      }
+      // Pan start
+      panStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      translateStart.current = { ...translate };
+    }
+  }, [translate]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2 && lastPinchDist.current !== null) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const delta = dist / lastPinchDist.current;
+      lastPinchDist.current = dist;
+      setScale(prev => Math.min(Math.max(prev * delta, 1), 5));
+    } else if (e.touches.length === 1 && panStart.current && scale > 1) {
+      const dx = e.touches[0].clientX - panStart.current.x;
+      const dy = e.touches[0].clientY - panStart.current.y;
+      setTranslate({
+        x: translateStart.current.x + dx,
+        y: translateStart.current.y + dy,
+      });
+    }
+  }, [scale]);
+
+  const handleTouchEnd = useCallback(() => {
+    lastPinchDist.current = null;
+    panStart.current = null;
+    // Snap back if scale is ~1
+    setScale(prev => {
+      if (prev < 1.05) {
+        setTranslate({ x: 0, y: 0 });
+        return 1;
+      }
+      return prev;
+    });
+  }, []);
+
+  return (
+    <div className="screenshot-viewer-overlay" onClick={onClose}>
+      <button className="screenshot-viewer-close" onClick={onClose} aria-label="Close">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <div
+        ref={imgRef}
+        className="screenshot-viewer-content"
+        onClick={e => e.stopPropagation()}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <img
+          src={src}
+          alt="Screenshot full"
+          draggable={false}
+          style={{
+            transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+            transition: lastPinchDist.current !== null ? 'none' : 'transform 0.2s ease',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
 
 /* ---- Streaming Text ---- */
 function StreamingText({ text, shouldAnimate }: { text: string; shouldAnimate: boolean }) {
@@ -139,6 +241,7 @@ export default function ChatScreen({
   onSend, onConfirm, onMarkStreamed, onSelectDevice, onRetry, onCancel, onRefresh
 }: Props) {
   const [input, setInput] = useState('');
+  const [viewingScreenshot, setViewingScreenshot] = useState<string | null>(null);
   const [mode, setMode] = useState<'execute' | 'plan'>('execute');
   const [showOfflineWarning, setShowOfflineWarning] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -358,8 +461,11 @@ export default function ChatScreen({
                         <StreamingText text={cmd.result_stdout} shouldAnimate={shouldStream} />
                       )}
                       {cmd.result_screenshot && (
-                        <div className="msg-screenshot">
+                        <div className="msg-screenshot" onClick={() => setViewingScreenshot(`data:image/png;base64,${cmd.result_screenshot}`)}>
                           <img src={`data:image/png;base64,${cmd.result_screenshot}`} alt="Screenshot" />
+                          <div className="screenshot-tap-hint">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg>
+                          </div>
                         </div>
                       )}
                       {cmd.result_stderr && !cmd.result_stdout && (
@@ -430,6 +536,11 @@ export default function ChatScreen({
           </div>
         )}
       </div>
+
+      {/* Screenshot Zoom Viewer */}
+      {viewingScreenshot && (
+        <ScreenshotViewer src={viewingScreenshot} onClose={() => setViewingScreenshot(null)} />
+      )}
     </div>
   );
 }

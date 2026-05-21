@@ -53,7 +53,10 @@ try {
 }
 
 let autoLauncher = null;
-if (AutoLaunch) {
+if (AutoLaunch && app.isPackaged) {
+  // Only enable auto-launch from the packaged EXE
+  // In dev mode, app.getPath('exe') returns raw electron.exe which would
+  // launch the Electron default screen on boot — NOT the RemoteForge app
   autoLauncher = new AutoLaunch({
     name: 'RemoteForge',
     path: app.getPath('exe'),

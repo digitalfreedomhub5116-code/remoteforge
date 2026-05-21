@@ -243,7 +243,12 @@ function initAI(config) {
   ];
 
   // Auto-detect provider from key prefix or explicit config
-  if (config.provider === 'groq' || apiKey.startsWith('gsk_')) {
+  if (config.provider === 'gemini' || apiKey.startsWith('AIza')) {
+    // Google Gemini — most generous free tier (15 RPM, 1500 req/day for Flash)
+    apiBase = 'https://generativelanguage.googleapis.com/v1beta/openai';
+    modelId = config.model || 'gemini-2.0-flash';
+    providerName = 'Gemini';
+  } else if (config.provider === 'groq' || apiKey.startsWith('gsk_')) {
     apiBase = 'https://api.groq.com/openai/v1';
     modelId = config.model || 'llama-3.3-70b-versatile';
     providerName = 'Groq';
@@ -264,6 +269,9 @@ function initAI(config) {
   console.log(`🧠 JARVIS brain initialized (${providerName} → ${modelId})`);
   if (providerName === 'OpenRouter') {
     console.log(`   📋 Fallback models: ${FALLBACK_MODELS.slice(1).join(', ')}`);
+  }
+  if (providerName === 'Gemini') {
+    console.log(`   ✨ Using Google Gemini — generous free tier (15 RPM, 1500 req/day)`);
   }
   return true;
 }
